@@ -2,9 +2,19 @@
 # Antigravity Switcher (agys) Installer
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 BIN_SRC="$SCRIPT_DIR/bin/agys"
 TARGET_DIR="$HOME/.local/bin"
+
+# If running via curl pipe or standalone without repo clone
+if [ ! -f "$BIN_SRC" ]; then
+    INSTALL_DIR="$HOME/.local/share/antigravity-switcher"
+    mkdir -p "$INSTALL_DIR/bin"
+    echo "==> Downloading latest binary from GitHub..."
+    curl -fsSL "https://raw.githubusercontent.com/agambondan/antigravity-switcher/main/bin/agys" -o "$INSTALL_DIR/bin/agys"
+    chmod +x "$INSTALL_DIR/bin/agys"
+    BIN_SRC="$INSTALL_DIR/bin/agys"
+fi
 
 echo "=========================================="
 echo "  Installing Antigravity Switcher (agys)  "

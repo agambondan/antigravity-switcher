@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity Switcher (agys) — Instant Multi-Account & Quota Switcher for agy</title>
+  <meta name="description" content="Fast, seamless multi-account switcher and real-time quota tracker for Google Antigravity CLI (agy). 1-second switching, multi-terminal collision guard, and auto-resume.">
+  <meta name="keywords" content="antigravity, antigravity-cli, google-one, 9router, claude, gemini, account-switcher, tmux, rate-limit">
+  
+  <!-- Open Graph -->
+  <meta property="og:title" content="Antigravity Switcher (agys)">
+  <meta property="og:description" content="Instant Google One Multi-Account Switcher & Real-Time Quota Intelligence for Antigravity CLI">
+  <meta property="og:image" content="assets/screenshot-quota.png">
+  <meta property="og:type" content="website">
+  
+  <!-- Favicon / Fonts -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              400: '#34d399',
+              500: '#10b981',
+              600: '#059669',
+            },
+            accent: {
+              400: '#38bdf8',
+              500: '#0ea5e9',
+            },
+            surface: {
+              950: '#070a13',
+              900: '#0c1222',
+              850: '#111827',
+              800: '#1e293b',
+              700: '#334155',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    body {
+      background-color: #070a13;
+      color: #f1f5f9;
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    }
+    .glow-radial {
+      background: radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.15), rgba(14, 165, 233, 0.08) 50%, transparent 80%);
+    }
+    .glow-card:hover {
+      box-shadow: 0 0 25px -5px rgba(52, 211, 153, 0.15);
+      border-color: rgba(52, 211, 153, 0.4);
+    }
+    .glass {
+      background: rgba(17, 24, 39, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+  </style>
+</head>
+<body class="selection:bg-emerald-500/20 selection:text-emerald-300 min-h-screen flex flex-col antialiased relative overflow-x-hidden">
+
+  <!-- Glow Background Effect -->
+  <div class="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-[700px] glow-radial pointer-events-none -z-10"></div>
+
+  <!-- Navigation -->
+  <header class="sticky top-0 z-50 glass border-b border-surface-800/80 transition-all">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-3 group">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-black font-bold shadow-lg shadow-emerald-500/20 group-hover:scale-105 transition-transform">
+          ⚡
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span class="font-bold text-lg tracking-tight text-white group-hover:text-emerald-400 transition-colors">Antigravity Switcher</span>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">v1.0.0</span>
+        </div>
+      </a>
+
+      <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+        <a href="#features" class="hover:text-white transition-colors">Features</a>
+        <a href="#demo" class="hover:text-white transition-colors">Interactive Demo</a>
+        <a href="#install" class="hover:text-white transition-colors">Install</a>
+        <a href="#commands" class="hover:text-white transition-colors">Cheatsheet</a>
+        <a href="#faq" class="hover:text-white transition-colors">FAQ</a>
+      </nav>
+
+      <div class="flex items-center gap-3">
+        <a href="https://github.com/agambondan/antigravity-switcher" target="_blank" rel="noopener noreferrer" 
+           class="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-surface-800 hover:bg-surface-700 text-white border border-surface-700 hover:border-slate-500 transition-all shadow-sm">
+          <i data-lucide="github" class="w-4 h-4"></i>
+          <span>Star on GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="relative pt-20 pb-16 md:pt-28 md:pb-24 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto text-center">
+    
+    <!-- Top Pill Announcement -->
+    <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-medium mb-8">
+      <span class="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      <span>v1.0.0 is Live — Real-Time 9Router Quota Tracker & Auto-Resume</span>
+    </div>
+
+    <!-- Main Title -->
+    <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-white leading-[1.1] mb-6">
+      Never Hit a Rate Limit Again.<br>
+      <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-300 to-indigo-400">
+        Switch Google Accounts in 1s.
+      </span>
+    </h1>
+
+    <!-- Subtitle -->
+    <p class="max-w-3xl mx-auto text-base sm:text-lg text-slate-400 leading-relaxed mb-10">
+      The essential companion tool for <b>Google Antigravity CLI (<code class="text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded font-mono text-sm">agy</code>)</b>. Seamlessly switch accounts without browser re-logins, automatically select accounts with the highest 5-hour quota, guard against multi-terminal collisions, and resume your active tasks instantaneously.
+    </p>
+
+    <!-- One-liner Command Box -->
+    <div class="max-w-2xl mx-auto mb-10">
+      <div class="bg-surface-900 border border-surface-700/80 rounded-2xl p-2.5 shadow-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 relative group">
+        <div class="flex items-center gap-3 px-3 py-1 text-slate-300 font-mono text-xs sm:text-sm overflow-x-auto">
+          <span class="text-emerald-400 select-none">$</span>
+          <span id="install-cmd" class="text-slate-200">curl -fsSL https://raw.githubusercontent.com/agambondan/antigravity-switcher/main/install.sh | bash</span>
+        </div>
+        <button onclick="copyInstallCmd()" id="copy-btn" 
+                class="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs sm:text-sm transition-all shadow-md shadow-emerald-500/20 active:scale-95 shrink-0">
+          <i data-lucide="copy" class="w-4 h-4"></i>
+          <span id="copy-text">Copy Install Command</span>
+        </button>
+      </div>
+      <p class="text-xs text-slate-500 mt-2 font-mono">Compatible with Linux & macOS • Python 3.9+ • Zero telemetry</p>
+    </div>
+
+    <!-- Quick CTA Links -->
+    <div class="flex flex-wrap items-center justify-center gap-4">
+      <a href="#install" class="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-bold text-sm shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2">
+        <i data-lucide="download" class="w-4 h-4"></i>
+        <span>Get Started</span>
+      </a>
+      <a href="https://github.com/agambondan/antigravity-switcher/releases/download/v1.0.0/demo.mp4" target="_blank"
+         class="px-6 py-3 rounded-xl bg-surface-800 hover:bg-surface-700 text-slate-200 font-semibold text-sm border border-surface-700 transition-all flex items-center gap-2">
+        <i data-lucide="play-circle" class="w-4 h-4 text-cyan-400"></i>
+        <span>Watch Full Demo Video (MP4)</span>
+      </a>
+      <a href="https://github.com/agambondan/antigravity-switcher" target="_blank"
+         class="px-6 py-3 rounded-xl bg-surface-900 hover:bg-surface-800 text-slate-300 font-medium text-sm border border-surface-800 transition-all flex items-center gap-2">
+        <i data-lucide="code" class="w-4 h-4"></i>
+        <span>View Source Code</span>
+      </a>
+    </div>
+
+  </section>
+
+  <!-- Value Metrics Bar -->
+  <section class="border-y border-surface-800 bg-surface-900/40 py-10 px-4">
+    <div class="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+      <div class="space-y-1">
+        <div class="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">1 Second</div>
+        <div class="text-xs sm:text-sm text-slate-400">Credential Switch Speed</div>
+      </div>
+      <div class="space-y-1">
+        <div class="text-3xl sm:text-4xl font-extrabold text-white">6+ Terminals</div>
+        <div class="text-xs sm:text-sm text-slate-400">Simultaneous Collision Guard</div>
+      </div>
+      <div class="space-y-1">
+        <div class="text-3xl sm:text-4xl font-extrabold text-cyan-400">&lt; 1 ms</div>
+        <div class="text-xs sm:text-sm text-slate-400">Tmux / Zsh Statusline Latency</div>
+      </div>
+      <div class="space-y-1">
+        <div class="text-3xl sm:text-4xl font-extrabold text-emerald-400">100% Local</div>
+        <div class="text-xs sm:text-sm text-slate-400">OS Keyring & SQLite Storage</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Demo & Preview Showcase -->
+  <section id="demo" class="py-20 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
+    <div class="text-center mb-12">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">Visual Showcase</h2>
+      <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Experience Antigravity Switcher in Action</p>
+      <p class="text-slate-400 text-sm mt-3 max-w-2xl mx-auto">
+        Switch accounts, monitor Claude & Gemini 5-hour cooldown timers, and resume conversations without losing context.
+      </p>
+    </div>
+
+    <!-- Mock Window Container -->
+    <div class="bg-surface-900 border border-surface-700/80 rounded-2xl shadow-2xl overflow-hidden">
+      <!-- Window Titlebar with Tabs -->
+      <div class="bg-surface-950 px-4 py-3 border-b border-surface-800 flex flex-wrap items-center justify-between gap-4">
+        <!-- Window Controls -->
+        <div class="flex items-center gap-2">
+          <div class="w-3 h-3 rounded-full bg-rose-500/80"></div>
+          <div class="w-3 h-3 rounded-full bg-amber-500/80"></div>
+          <div class="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+          <span class="text-xs font-mono text-slate-500 ml-2">agys-terminal — 1280x720</span>
+        </div>
+
+        <!-- Interactive Preview Tabs -->
+        <div class="flex items-center gap-1.5 p-1 rounded-xl bg-surface-900 border border-surface-800 text-xs font-mono">
+          <button onclick="switchTab('demo')" id="tab-demo" class="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 font-semibold transition-all">
+            ▶ Animated Walkthrough
+          </button>
+          <button onclick="switchTab('quota')" id="tab-quota" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-all">
+            📊 Quota Dashboard
+          </button>
+          <button onclick="switchTab('list')" id="tab-list" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-all">
+            📋 Accounts Matrix
+          </button>
+          <button onclick="switchTab('resume')" id="tab-resume" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-all">
+            🛡️ Auto-Resume Picker
+          </button>
+        </div>
+      </div>
+
+      <!-- Preview Image Display -->
+      <div class="relative bg-black flex items-center justify-center p-2 min-h-[420px]">
+        <img id="preview-img" src="assets/demo.gif" alt="Antigravity Switcher Preview" class="w-full h-auto rounded-lg shadow-inner max-h-[640px] object-contain transition-all">
+      </div>
+
+      <!-- Footer Bar inside Window -->
+      <div class="bg-surface-950 px-5 py-3 border-t border-surface-800/80 flex flex-wrap items-center justify-between text-xs font-mono text-slate-400">
+        <div id="preview-caption" class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          <span>Live Demo: agys list ➔ agys usage ➔ agys auto ➔ agyr</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <a href="https://github.com/agambondan/antigravity-switcher/releases/download/v1.0.0/demo.mp4" target="_blank" class="hover:text-cyan-400 flex items-center gap-1 text-slate-300">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i> Download Full MP4
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Problem & Solution Section -->
+  <section class="py-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      
+      <!-- The Pain -->
+      <div class="bg-surface-900/60 border border-rose-500/20 rounded-2xl p-8 relative overflow-hidden">
+        <div class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mb-6">
+          <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-xl font-bold text-white mb-4">The Agony of Native agy Limits</h3>
+        <ul class="space-y-3.5 text-sm text-slate-400">
+          <li class="flex items-start gap-3">
+            <span class="text-rose-400 font-bold">✕</span>
+            <span><b>Frequent 5-Hour Rate Limits:</b> Claude 3.5 Sonnet & GPT quotas hit lockouts during intensive coding sessions.</span>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="text-rose-400 font-bold">✕</span>
+            <span><b>Single-Account Bottleneck:</b> Switching accounts natively requires deleting OS credentials and completing the web OAuth dance every time.</span>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="text-rose-400 font-bold">✕</span>
+            <span><b>Multi-Terminal Collisions:</b> Running <code class="text-slate-300">agy -c</code> blindly loads whichever conversation touched disk last, corrupting context in other terminals.</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- The Remedy -->
+      <div class="bg-surface-900/60 border border-emerald-500/20 rounded-2xl p-8 relative overflow-hidden">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mb-6">
+          <i data-lucide="sparkles" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-xl font-bold text-white mb-4">The Antigravity Switcher Remedy</h3>
+        <ul class="space-y-3.5 text-sm text-slate-300">
+          <li class="flex items-start gap-3">
+            <span class="text-emerald-400 font-bold">✔</span>
+            <span><b>1-Second Instant Swap:</b> Hot-swaps credentials in system keyring with zero browser intervention.</span>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="text-emerald-400 font-bold">✔</span>
+            <span><b>Real-Time 9Router Quota Tracking:</b> Live progress bars and countdown timers for Claude, Gemini, and Argon pools.</span>
+          </li>
+          <li class="flex items-start gap-3">
+            <span class="text-emerald-400 font-bold">✔</span>
+            <span><b>The 2-Step Magic (<code class="text-emerald-300">agyr</code>):</b> Exit the rate-limited chat, run <code class="text-emerald-300">agyr</code>, and instantly resume on the account with the most quota!</span>
+          </li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Core Features Grid -->
+  <section id="features" class="py-20 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
+    <div class="text-center mb-16">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">Capabilities</h2>
+      <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Engineered for Heavy Pair-Programming</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+      <!-- Card 1 -->
+      <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mb-4">
+          <i data-lucide="zap" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Instant Credential Swap</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">
+          Switch active tokens in Linux SecretService or macOS Keychain in under a second. Never log out or wait for OAuth browser redirects again.
+        </p>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mb-4">
+          <i data-lucide="bar-chart-2" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Live 9Router Quota Dashboard</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">
+          Monitor 5-hour session limits and weekly allowances for Claude 3.5 Sonnet, GPT, Gemini, and Gemini 4 Argon with precise reset countdowns.
+        </p>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center mb-4">
+          <i data-lucide="bot" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Smart Auto-Best Selection</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">
+          One command (<code class="text-emerald-400 font-mono">agys auto</code>) evaluates all connected accounts and activates whichever currently has the highest remaining quota pool.
+        </p>
+      </div>
+
+      <!-- Card 4 -->
+      <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mb-4">
+          <i data-lucide="shield-alert" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Collision-Free Multi-Terminal</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">
+          Inspects active PTY sessions (<code class="text-amber-300 font-mono">● pts/2</code>, <code class="text-amber-300 font-mono">● pts/3</code>) so you never accidentally hijack another terminal's active workspace.
+        </p>
+      </div>
+
+      <!-- Card 5 -->
+      <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center mb-4">
+          <i data-lucide="bell-ring" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Desktop Reset Notifications</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">
+          Built-in background daemon notifies you via <code class="text-purple-300 font-mono">notify-send</code> the exact minute an exhausted Google One Pro account resets its 5-hour quota.
+        </p>
+      </div>
+
+      <!-- Card 6 -->
+      <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center mb-4">
+          <i data-lucide="terminal" class="w-5 h-5"></i>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Sub-Millisecond Statusline</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">
+          Reads local SQLite cache in < 1ms. Embed live account and quota indicators directly into your Tmux statusbar or Zsh RPROMPT without lag.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- The 2-Step Magic Section -->
+  <section class="py-16 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto">
+    <div class="bg-gradient-to-r from-surface-900 via-surface-850 to-surface-900 border border-surface-700 rounded-3xl p-8 sm:p-12 text-center relative overflow-hidden shadow-2xl">
+      <div class="inline-block px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-mono font-bold mb-4">
+        COOLDOWN ESCAPE WORKFLOW
+      </div>
+      <h2 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight mb-8">
+        Hit a 5-Hour Rate Limit? Recover in 2 Seconds.
+      </h2>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto text-left">
+        <!-- Step 1 -->
+        <div class="bg-surface-950/80 border border-surface-800 rounded-2xl p-6 flex items-start gap-4">
+          <div class="w-8 h-8 rounded-full bg-rose-500/20 text-rose-400 font-bold flex items-center justify-center shrink-0">1</div>
+          <div>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-1">Inside Antigravity</div>
+            <div class="font-bold text-white text-base mb-1">Exit the Session</div>
+            <p class="text-xs text-slate-400">Type <code class="text-rose-300 font-mono bg-rose-950/40 px-1 py-0.5 rounded">/exit</code> or press <kbd class="px-1.5 py-0.5 bg-surface-800 text-slate-300 rounded text-xs border border-surface-700">Ctrl + D</kbd></p>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="bg-surface-950/80 border border-surface-800 rounded-2xl p-6 flex items-start gap-4">
+          <div class="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 font-bold flex items-center justify-center shrink-0">2</div>
+          <div>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-1">In Your Terminal Shell</div>
+            <div class="font-bold text-white text-base mb-1">Run <code class="text-emerald-400">agyr</code></div>
+            <p class="text-xs text-slate-400">Automatically switches to the highest-quota account and resumes your exact conversation with permissions bypassed!</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation Instructions -->
+  <section id="install" class="py-20 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
+    <div class="text-center mb-12">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">Installation</h2>
+      <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Up and Running in 30 Seconds</p>
+    </div>
+
+    <!-- Install Tab Box -->
+    <div class="bg-surface-900 border border-surface-800 rounded-2xl overflow-hidden shadow-xl">
+      <!-- Tabs -->
+      <div class="bg-surface-950 px-4 pt-3 flex gap-2 border-b border-surface-800 text-xs font-mono">
+        <button onclick="setInstallTab('curl')" id="itab-curl" class="px-4 py-2 rounded-t-xl bg-surface-900 text-emerald-400 font-bold border-t border-x border-surface-800">
+          Option 1: Quick Install (curl)
+        </button>
+        <button onclick="setInstallTab('git')" id="itab-git" class="px-4 py-2 rounded-t-xl text-slate-400 hover:text-white">
+          Option 2: Git Clone
+        </button>
+      </div>
+
+      <!-- Code Box -->
+      <div class="p-6">
+        <div id="icontent-curl" class="space-y-4">
+          <p class="text-sm text-slate-400">Run this one-liner in your terminal to automatically download the binary, configure dependencies, and setup shell aliases:</p>
+          <div class="relative bg-surface-950 rounded-xl p-4 border border-surface-800 font-mono text-sm text-slate-200">
+            <code>curl -fsSL https://raw.githubusercontent.com/agambondan/antigravity-switcher/main/install.sh | bash</code>
+          </div>
+        </div>
+
+        <div id="icontent-git" class="hidden space-y-4">
+          <p class="text-sm text-slate-400">Clone the repository and run the local install script:</p>
+          <div class="relative bg-surface-950 rounded-xl p-4 border border-surface-800 font-mono text-sm text-slate-200 space-y-1">
+            <div><span class="text-slate-500"># 1. Clone repository</span></div>
+            <div>git clone https://github.com/agambondan/antigravity-switcher.git</div>
+            <div><span class="text-slate-500"># 2. Run installer</span></div>
+            <div>cd antigravity-switcher && ./install.sh</div>
+          </div>
+        </div>
+
+        <!-- Post install info -->
+        <div class="mt-6 pt-6 border-t border-surface-800/80 flex items-start gap-3 text-xs text-slate-400">
+          <i data-lucide="info" class="w-4 h-4 text-cyan-400 shrink-0 mt-0.5"></i>
+          <div>
+            The installer automatically creates symlinks in <code class="text-slate-300 font-mono">~/.local/bin/</code> and registers convenient shell aliases (<code class="text-emerald-400 font-mono">agyr</code>, <code class="text-emerald-400 font-mono">agys</code>).
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Commands Cheatsheet Table -->
+  <section id="commands" class="py-16 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto">
+    <div class="text-center mb-12">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">CLI Cheatsheet</h2>
+      <p class="text-3xl font-extrabold text-white tracking-tight">Essential Commands Reference</p>
+    </div>
+
+    <div class="bg-surface-900 border border-surface-800 rounded-2xl overflow-hidden shadow-xl">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-surface-950 border-b border-surface-800 text-xs font-mono uppercase text-slate-400">
+            <tr>
+              <th class="py-3.5 px-6 font-semibold">Command</th>
+              <th class="py-3.5 px-6 font-semibold">Purpose</th>
+              <th class="py-3.5 px-6 font-semibold">Flags / Usage</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-surface-800/60 font-mono text-xs">
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-emerald-400 font-bold">agys</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Open interactive Rich TUI menu with hotkeys</td>
+              <td class="py-3 px-6 text-slate-500">Interactive</td>
+            </tr>
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-emerald-400 font-bold">agyr</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Auto-switch to account with most quota & resume conversation</td>
+              <td class="py-3 px-6 text-slate-500">Shortcut for <code class="text-slate-400">agys auto -c</code></td>
+            </tr>
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-cyan-400 font-bold">agys list</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Show table of all saved accounts, plan tiers, and quotas</td>
+              <td class="py-3 px-6 text-slate-500"><code class="text-slate-400">-s quota|plan|email</code></td>
+            </tr>
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-cyan-400 font-bold">agys usage</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Live visual quota progress bar tracker with timers</td>
+              <td class="py-3 px-6 text-slate-500">Alias: <code class="text-slate-400">agys quota</code></td>
+            </tr>
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-indigo-400 font-bold">agys auto</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Auto-detect and switch to account with highest available quota</td>
+              <td class="py-3 px-6 text-slate-500"><code class="text-slate-400">-c</code> to resume chat</td>
+            </tr>
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-indigo-400 font-bold">agys use &lt;acc&gt;</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Switch immediately to account by index number or email</td>
+              <td class="py-3 px-6 text-slate-500"><code class="text-slate-400">agys use 2</code> or <code class="text-slate-400">agys use user@gmail.com</code></td>
+            </tr>
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-purple-400 font-bold">agys daemon start</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Run background watcher with desktop notifications on quota reset</td>
+              <td class="py-3 px-6 text-slate-500"><code class="text-slate-400">agys daemon status|stop</code></td>
+            </tr>
+            <tr class="hover:bg-surface-800/40">
+              <td class="py-3 px-6 text-teal-400 font-bold">agys statusline</td>
+              <td class="py-3 px-6 text-slate-300 font-sans">Sub-millisecond statusline string for Tmux & Zsh prompt</td>
+              <td class="py-3 px-6 text-slate-500"><code class="text-slate-400">--tmux</code>, <code class="text-slate-400">--plain</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ Section -->
+  <section id="faq" class="py-20 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
+    <div class="text-center mb-12">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">FAQ</h2>
+      <p class="text-3xl font-extrabold text-white tracking-tight">Frequently Asked Questions</p>
+    </div>
+
+    <div class="space-y-4">
+      <!-- Q1 -->
+      <details class="bg-surface-900 border border-surface-800 rounded-xl p-5 group [&_summary::-webkit-details-marker]:hidden">
+        <summary class="flex items-center justify-between cursor-pointer font-bold text-white text-base">
+          <span>Are my Google account credentials and passwords safe?</span>
+          <span class="transition-transform group-open:rotate-180 text-emerald-400">▾</span>
+        </summary>
+        <p class="mt-3 text-sm text-slate-400 leading-relaxed">
+          Yes, 100%. Antigravity Switcher never asks for or stores your Google passwords. It only handles OAuth refresh tokens managed securely in your operating system's native keyring (SecretService / DBus on Linux, macOS Keychain) with strict <code class="text-slate-300">0700</code> filesystem permissions.
+        </p>
+      </details>
+
+      <!-- Q2 -->
+      <details class="bg-surface-900 border border-surface-800 rounded-xl p-5 group [&_summary::-webkit-details-marker]:hidden">
+        <summary class="flex items-center justify-between cursor-pointer font-bold text-white text-base">
+          <span>How does it detect and track rate limits?</span>
+          <span class="transition-transform group-open:rotate-180 text-emerald-400">▾</span>
+        </summary>
+        <p class="mt-3 text-sm text-slate-400 leading-relaxed">
+          It interfaces directly with the local 9Router API endpoint to read remaining percentages, cooldown countdowns, and quota limits for Claude & GPT, Gemini, and Gemini 4 Argon.
+        </p>
+      </details>
+
+      <!-- Q3 -->
+      <details class="bg-surface-900 border border-surface-800 rounded-xl p-5 group [&_summary::-webkit-details-marker]:hidden">
+        <summary class="flex items-center justify-between cursor-pointer font-bold text-white text-base">
+          <span>How does collision prevention work across multiple terminals?</span>
+          <span class="transition-transform group-open:rotate-180 text-emerald-400">▾</span>
+        </summary>
+        <p class="mt-3 text-sm text-slate-400 leading-relaxed">
+          It scans Linux PTY devices (<code class="text-slate-300">/proc/*/fd</code> and active pseudo-terminals) for running Antigravity processes. Any conversation currently locked by another terminal window is flagged with its PTY (e.g. <code class="text-amber-300">● pts/2</code>) so you never accidentally hijack someone else's active task.
+        </p>
+      </details>
+
+      <!-- Q4 -->
+      <details class="bg-surface-900 border border-surface-800 rounded-xl p-5 group [&_summary::-webkit-details-marker]:hidden">
+        <summary class="flex items-center justify-between cursor-pointer font-bold text-white text-base">
+          <span>How do I add a new Google account?</span>
+          <span class="transition-transform group-open:rotate-180 text-emerald-400">▾</span>
+        </summary>
+        <p class="mt-3 text-sm text-slate-400 leading-relaxed">
+          Simply run <code class="text-emerald-400 font-mono">agys add</code> or press <kbd class="px-1.5 py-0.5 bg-surface-800 rounded text-xs">a</kbd> in the interactive menu. It initiates a standard Antigravity login flow and saves the profile to your local switcher vault.
+        </p>
+      </details>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="border-t border-surface-800 bg-surface-950 py-12 px-4 mt-auto">
+    <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6 text-xs text-slate-500">
+      <div class="flex items-center gap-3">
+        <span class="font-bold text-slate-300">Antigravity Switcher (agys)</span>
+        <span>•</span>
+        <span>MIT Licensed</span>
+        <span>•</span>
+        <span>Crafted by <a href="https://github.com/agambondan" target="_blank" class="text-slate-400 hover:text-white underline">Agam Bondan</a></span>
+      </div>
+      <div class="flex items-center gap-6">
+        <a href="https://github.com/agambondan/antigravity-switcher" target="_blank" class="hover:text-emerald-400 transition-colors">GitHub Repository</a>
+        <a href="https://github.com/agambondan/antigravity-switcher/releases" target="_blank" class="hover:text-emerald-400 transition-colors">Releases</a>
+        <a href="https://github.com/agambondan/antigravity-switcher/blob/main/LICENSE" target="_blank" class="hover:text-emerald-400 transition-colors">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Interactive Scripts -->
+  <script>
+    // Initialize Lucide icons
+    lucide.createIcons();
+
+    // Copy install command with feedback
+    function copyInstallCmd() {
+      const cmdText = document.getElementById('install-cmd').innerText;
+      navigator.clipboard.writeText(cmdText).then(() => {
+        const copyBtn = document.getElementById('copy-btn');
+        const copyText = document.getElementById('copy-text');
+        copyText.innerText = "Copied to Clipboard!";
+        copyBtn.classList.add('bg-cyan-400');
+        setTimeout(() => {
+          copyText.innerText = "Copy Install Command";
+          copyBtn.classList.remove('bg-cyan-400');
+        }, 2000);
+      });
+    }
+
+    // Interactive Preview Tabs
+    const previewImg = document.getElementById('preview-img');
+    const previewCaption = document.getElementById('preview-caption');
+    const tabs = {
+      demo: {
+        src: 'assets/demo.gif',
+        caption: 'Live Demo: agys list ➔ agys usage ➔ agys auto ➔ agyr',
+        btnId: 'tab-demo'
+      },
+      quota: {
+        src: 'assets/screenshot-quota.png',
+        caption: 'Detailed Live Quota Tracker: agys usage / agys quota',
+        btnId: 'tab-quota'
+      },
+      list: {
+        src: 'assets/screenshot-list.png',
+        caption: 'Multi-Account Overview & Plan Tiers: agys list',
+        btnId: 'tab-list'
+      },
+      resume: {
+        src: 'assets/screenshot-resume.png',
+        caption: 'Smart Multi-Terminal Conversation Resume: agyr',
+        btnId: 'tab-resume'
+      }
+    };
+
+    function switchTab(key) {
+      Object.keys(tabs).forEach(k => {
+        const btn = document.getElementById(tabs[k].btnId);
+        btn.className = "px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition-all";
+      });
+      const activeBtn = document.getElementById(tabs[key].btnId);
+      activeBtn.className = "px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 font-semibold transition-all";
+      
+      previewImg.src = tabs[key].src;
+      previewCaption.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span>${tabs[key].caption}</span>`;
+    }
+
+    // Install Tabs
+    function setInstallTab(tab) {
+      const curlBtn = document.getElementById('itab-curl');
+      const gitBtn = document.getElementById('itab-git');
+      const curlContent = document.getElementById('icontent-curl');
+      const gitContent = document.getElementById('icontent-git');
+
+      if (tab === 'curl') {
+        curlBtn.className = "px-4 py-2 rounded-t-xl bg-surface-900 text-emerald-400 font-bold border-t border-x border-surface-800";
+        gitBtn.className = "px-4 py-2 rounded-t-xl text-slate-400 hover:text-white";
+        curlContent.classList.remove('hidden');
+        gitContent.classList.add('hidden');
+      } else {
+        gitBtn.className = "px-4 py-2 rounded-t-xl bg-surface-900 text-emerald-400 font-bold border-t border-x border-surface-800";
+        curlBtn.className = "px-4 py-2 rounded-t-xl text-slate-400 hover:text-white";
+        gitContent.classList.remove('hidden');
+        curlContent.classList.add('hidden');
+      }
+    }
+  </script>
+</body>
+</html>
