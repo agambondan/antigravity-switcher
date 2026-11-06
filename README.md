@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey.svg)]()
+[![Website](https://img.shields.io/badge/Website-antigravity--switcher.vercel.app-10b981?logo=vercel&logoColor=white)](https://antigravity-switcher.vercel.app)
 
 > **Fast, seamless multi-account switcher and real-time quota tracker for Google Antigravity CLI (`agy`).**
 
