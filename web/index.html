@@ -150,11 +150,13 @@
         </div>
       </a>
 
-      <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+      <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-400">
         <a href="#features" class="hover:text-white transition-colors">Features</a>
-        <a href="#demo" class="hover:text-white transition-colors">Interactive Demo</a>
+        <a href="#prerequisites" class="hover:text-white transition-colors">Prerequisites</a>
+        <a href="#demo" class="hover:text-white transition-colors">Demo</a>
         <a href="#install" class="hover:text-white transition-colors">Install</a>
         <a href="#commands" class="hover:text-white transition-colors">Cheatsheet</a>
+        <a href="#changelog" class="hover:text-white transition-colors">Changelog</a>
         <a href="#faq" class="hover:text-white transition-colors">FAQ</a>
       </nav>
 
@@ -471,6 +473,127 @@
     </div>
   </section>
 
+  <!-- Prerequisites Section -->
+  <section id="prerequisites" class="py-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
+    <div class="text-center mb-12">
+      <h2 class="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-2">Requirements</h2>
+      <p class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">System Prerequisites</p>
+      <p class="text-slate-400 text-sm mt-3 max-w-2xl mx-auto">
+        Antigravity Switcher runs lightweight and natively on standard developer environments. Ensure the following prerequisites are met:
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <!-- Req 1: OS -->
+      <div class="bg-surface-900/80 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="flex items-center justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+            <i data-lucide="cpu" class="w-5 h-5"></i>
+          </div>
+          <span class="text-xs font-mono px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Required</span>
+        </div>
+        <h3 class="text-base font-bold text-white mb-1.5">Operating System</h3>
+        <p class="text-xs text-slate-400 leading-relaxed mb-3">
+          <b>Linux</b> (Ubuntu 20.04+, Debian, Fedora, Arch, Pop!_OS) or <b>macOS</b> (Monterey, Ventura, Sonoma, Sequoia).
+        </p>
+        <div class="bg-surface-950 px-3 py-1.5 rounded-lg border border-surface-800 font-mono text-[11px] text-slate-400 flex items-center justify-between">
+          <span>uname -s</span>
+          <span class="text-emerald-400">Linux / Darwin</span>
+        </div>
+      </div>
+
+      <!-- Req 2: Python -->
+      <div class="bg-surface-900/80 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="flex items-center justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold">
+            <i data-lucide="code-2" class="w-5 h-5"></i>
+          </div>
+          <span class="text-xs font-mono px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Required</span>
+        </div>
+        <h3 class="text-base font-bold text-white mb-1.5">Python 3.9+ & pip</h3>
+        <p class="text-xs text-slate-400 leading-relaxed mb-3">
+          Python runtime with standard libraries. The installer automatically provisions required packages (<code class="text-slate-300">rich</code>, <code class="text-slate-300">keyring</code>).
+        </p>
+        <div class="bg-surface-950 px-3 py-1.5 rounded-lg border border-surface-800 font-mono text-[11px] text-slate-400 flex items-center justify-between">
+          <span>python3 --version</span>
+          <span class="text-cyan-400">&gt;= 3.9.0</span>
+        </div>
+      </div>
+
+      <!-- Req 3: Antigravity CLI -->
+      <div class="bg-surface-900/80 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="flex items-center justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+            <i data-lucide="terminal-square" class="w-5 h-5"></i>
+          </div>
+          <span class="text-xs font-mono px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Required</span>
+        </div>
+        <h3 class="text-base font-bold text-white mb-1.5">Google Antigravity CLI</h3>
+        <p class="text-xs text-slate-400 leading-relaxed mb-3">
+          Official <code class="text-indigo-300">agy</code> CLI executable installed and authenticated with your primary Google account at least once.
+        </p>
+        <div class="bg-surface-950 px-3 py-1.5 rounded-lg border border-surface-800 font-mono text-[11px] text-slate-400 flex items-center justify-between">
+          <span>agy --version</span>
+          <span class="text-indigo-400">installed in PATH</span>
+        </div>
+      </div>
+
+      <!-- Req 4: 9Router -->
+      <div class="bg-surface-900/80 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="flex items-center justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+          </div>
+          <span class="text-xs font-mono px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Required</span>
+        </div>
+        <h3 class="text-base font-bold text-white mb-1.5">9Router Local Runtime</h3>
+        <p class="text-xs text-slate-400 leading-relaxed mb-3">
+          9Router local daemon running in background to supply real-time quota telemetry and model usage data (<code class="text-slate-300">~/.9router/</code>).
+        </p>
+        <div class="bg-surface-950 px-3 py-1.5 rounded-lg border border-surface-800 font-mono text-[11px] text-slate-400 flex items-center justify-between">
+          <span>~/.9router/</span>
+          <span class="text-amber-400">sqlite / api online</span>
+        </div>
+      </div>
+
+      <!-- Req 5: Keyring -->
+      <div class="bg-surface-900/80 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="flex items-center justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center font-bold">
+            <i data-lucide="lock" class="w-5 h-5"></i>
+          </div>
+          <span class="text-xs font-mono px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20">Required</span>
+        </div>
+        <h3 class="text-base font-bold text-white mb-1.5">OS Keyring Service</h3>
+        <p class="text-xs text-slate-400 leading-relaxed mb-3">
+          Linux SecretService (<code class="text-slate-300">gnome-keyring</code>, <code class="text-slate-300">ksecretsservice</code>) or macOS Keychain for encrypted credential tokens.
+        </p>
+        <div class="bg-surface-950 px-3 py-1.5 rounded-lg border border-surface-800 font-mono text-[11px] text-slate-400 flex items-center justify-between">
+          <span>service: keyring</span>
+          <span class="text-teal-400">SecretService / Keychain</span>
+        </div>
+      </div>
+
+      <!-- Req 6: Optional packages -->
+      <div class="bg-surface-900/80 border border-surface-800 rounded-2xl p-6 glow-card transition-all">
+        <div class="flex items-center justify-between mb-4">
+          <div class="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center font-bold">
+            <i data-lucide="puzzle" class="w-5 h-5"></i>
+          </div>
+          <span class="text-xs font-mono px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">Optional</span>
+        </div>
+        <h3 class="text-base font-bold text-white mb-1.5">Optional Enhancements</h3>
+        <p class="text-xs text-slate-400 leading-relaxed mb-3">
+          <code class="text-purple-300">libnotify-bin</code> for desktop notifications (<code class="text-slate-300">notify-send</code>), <code class="text-purple-300">tmux</code> for statusline, and <code class="text-purple-300">zenity</code> for desktop dialogs.
+        </p>
+        <div class="bg-surface-950 px-3 py-1.5 rounded-lg border border-surface-800 font-mono text-[11px] text-slate-400 flex items-center justify-between">
+          <span>notify-send / tmux</span>
+          <span class="text-purple-400">recommended</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Installation Instructions -->
   <section id="install" class="py-20 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
     <div class="text-center mb-12">
@@ -580,6 +703,84 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Changelog Section -->
+  <section id="changelog" class="py-20 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
+    <div class="text-center mb-16">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-bold mb-3">
+        RELEASE NOTES
+      </div>
+      <h2 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">Changelog & Updates</h2>
+      <p class="text-slate-400 text-sm mt-3 max-w-xl mx-auto">
+        Track all new capabilities, improvements, and releases. Synchronized directly with GitHub releases and commits.
+      </p>
+      <div class="mt-4">
+        <a href="https://github.com/agambondan/antigravity-switcher/blob/main/CHANGELOG.md" target="_blank"
+           class="inline-flex items-center gap-1.5 text-xs font-mono text-emerald-400 hover:text-emerald-300 underline underline-offset-4">
+          <span>View CHANGELOG.md on GitHub</span>
+          <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+        </a>
+      </div>
+    </div>
+
+    <!-- Timeline Container -->
+    <div id="changelog-container" class="relative pl-6 sm:pl-8 border-l border-surface-800 space-y-12">
+      <!-- v1.0.0 Entry -->
+      <div class="relative group">
+        <!-- Glowing Timeline Node -->
+        <div class="absolute -left-[31px] sm:-left-[39px] top-1.5 w-4 h-4 rounded-full bg-emerald-500 border-4 border-surface-950 shadow-lg shadow-emerald-500/50"></div>
+
+        <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 sm:p-8 glow-card transition-all">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div class="flex items-center gap-3">
+              <span class="text-lg font-extrabold text-white font-mono">v1.0.0</span>
+              <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 text-xs font-mono font-semibold">Latest Release</span>
+            </div>
+            <time class="text-xs font-mono text-slate-400 flex items-center gap-1.5">
+              <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
+              November 6, 2026
+            </time>
+          </div>
+
+          <p class="text-sm text-slate-300 font-medium mb-5 leading-relaxed">
+            Initial public release of <b>Antigravity Switcher (<code class="text-emerald-400 font-mono">agys</code>)</b> — complete multi-account management, 9Router quota intelligence, multi-terminal collision protection, desktop reset notifications, and instant auto-resume.
+          </p>
+
+          <div class="space-y-4">
+            <div>
+              <div class="text-xs font-mono uppercase tracking-wider text-emerald-400 font-bold mb-2 flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span>Added & Core Features</span>
+              </div>
+              <ul class="space-y-2 text-xs sm:text-sm text-slate-400 list-disc list-inside">
+                <li><strong class="text-slate-200">Instant 1s Account Switching:</strong> Swap active Google credentials in OS Keyring with zero browser redirects.</li>
+                <li><strong class="text-slate-200">Real-Time 9Router Quota Tracking:</strong> Live progress bars for Claude 3.5 Sonnet, GPT, Gemini Pro, and Gemini 4 Argon.</li>
+                <li><strong class="text-slate-200">Gemini 4 Argon Pool Support:</strong> Shared pool quota parsing across high, medium, and low tiers.</li>
+                <li><strong class="text-slate-200">Smart Quota-First Sorting (<code class="text-slate-300">agys auto</code>):</strong> Automatically switches to the account with the highest available capacity.</li>
+                <li><strong class="text-slate-200">Collision-Free Auto-Resume (<code class="text-slate-300">agyr</code>):</strong> PTY session detection (<code class="text-amber-300">pts/*</code>) prevents multi-terminal collisions.</li>
+                <li><strong class="text-slate-200">Background Watcher Daemon:</strong> Detached monitor (<code class="text-slate-300">agys daemon start</code>) with desktop alerts (<code class="text-slate-300">notify-send</code>) on 5-hour quota resets.</li>
+                <li><strong class="text-slate-200">Sub-Millisecond Statusline:</strong> Latency under 1ms (<code class="text-slate-300">agys statusline</code>) for Tmux statusbar and Zsh <code class="text-slate-300">RPROMPT</code>.</li>
+                <li><strong class="text-slate-200">Automatic Permissions Bypass:</strong> Seamlessly injects <code class="text-slate-300">--dangerously-skip-permissions</code> across all aliases.</li>
+                <li><strong class="text-slate-200">Interactive Rich TUI & Zenity GUI:</strong> Terminal hotkeys and native desktop dialog support.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="mt-6 pt-5 border-t border-surface-800/80 flex flex-wrap items-center justify-between gap-4 text-xs font-mono text-slate-400">
+            <div class="flex items-center gap-4">
+              <a href="https://github.com/agambondan/antigravity-switcher/releases/tag/v1.0.0" target="_blank" class="hover:text-cyan-400 flex items-center gap-1">
+                <i data-lucide="tag" class="w-3.5 h-3.5"></i> Release v1.0.0
+              </a>
+              <a href="https://github.com/agambondan/antigravity-switcher/releases/download/v1.0.0/demo.mp4" target="_blank" class="hover:text-emerald-400 flex items-center gap-1">
+                <i data-lucide="film" class="w-3.5 h-3.5"></i> Full Demo Video (MP4)
+              </a>
+            </div>
+            <span class="text-slate-500">Commit dc2d3b2</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -734,6 +935,47 @@
         curlContent.classList.add('hidden');
       }
     }
+
+    // Auto-sync dynamic releases from GitHub API
+    async function loadGitHubReleases() {
+      try {
+        const res = await fetch('https://api.github.com/repos/agambondan/antigravity-switcher/releases');
+        if (!res.ok) return;
+        const releases = await res.json();
+        if (!releases || !Array.isArray(releases) || releases.length <= 1) return;
+
+        const container = document.getElementById('changelog-container');
+        releases.forEach(rel => {
+          if (rel.tag_name === 'v1.0.0') return;
+          const el = document.createElement('div');
+          el.className = "relative group";
+          el.innerHTML = `
+            <div class="absolute -left-[31px] sm:-left-[39px] top-1.5 w-4 h-4 rounded-full bg-cyan-400 border-4 border-surface-950 shadow-lg shadow-cyan-400/50"></div>
+            <div class="bg-surface-900 border border-surface-800 rounded-2xl p-6 sm:p-8 glow-card transition-all">
+              <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div class="flex items-center gap-3">
+                  <span class="text-lg font-extrabold text-white font-mono">${rel.tag_name}</span>
+                  <span class="px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/25 text-xs font-mono font-semibold">Update</span>
+                </div>
+                <time class="text-xs font-mono text-slate-400 flex items-center gap-1.5">
+                  ${new Date(rel.published_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                </time>
+              </div>
+              <div class="text-xs sm:text-sm text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">${rel.body || 'No description provided.'}</div>
+              <div class="mt-4 pt-4 border-t border-surface-800/80 flex items-center gap-4 text-xs font-mono text-slate-400">
+                <a href="${rel.html_url}" target="_blank" class="hover:text-cyan-400 flex items-center gap-1">
+                  View Release on GitHub →
+                </a>
+              </div>
+            </div>
+          `;
+          container.prepend(el);
+        });
+      } catch (err) {
+        console.debug('GitHub release sync fallback:', err);
+      }
+    }
+    loadGitHubReleases();
   </script>
 </body>
 </html>
