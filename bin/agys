@@ -13,6 +13,7 @@ import stat
 import shutil
 import hashlib
 import sqlite3
+import signal
 import subprocess
 import urllib.request
 from datetime import datetime, timezone
@@ -48,6 +49,9 @@ CONFIG_DIR = Path.home() / ".config" / "antigravity-switcher"
 ACCOUNTS_DIR = CONFIG_DIR / "accounts"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 QUOTA_CACHE_FILE = CONFIG_DIR / "quota-cache.json"
+DAEMON_PID_FILE = CONFIG_DIR / "daemon.pid"
+DAEMON_LOG_FILE = CONFIG_DIR / "daemon.log"
+EXHAUSTED_STATE_FILE = CONFIG_DIR / "exhausted_state.json"
 CACHE_TTL = 90  # seconds
 
 console = Console() if HAS_RICH else None
@@ -1220,6 +1224,265 @@ def auto_switch_best_account(do_resume: bool = False) -> bool:
     return False
 
 
+def generate_statusline(fmt: str = "ansi") -> str:
+    """
+    Generate a lightweight, sub-millisecond one-line status string.
+    Formats:
+      - 'ansi' (default, for shell prompt / RPROMPT)
+      - 'tmux' (for tmux status-right or status-left)
+      - 'plain' (no escape codes)
+      - 'json' (raw JSON)
+    """
+    active_email = get_active_email()
+    if not active_email:
+        return "agys: No active account" if fmt != "json" else json.dumps({"error": "no active account"})
+
+    quotas = get_9router_quotas(force_refresh=False)
+    q = quotas.get(active_email, {}) or {}
+    accounts = load_accounts()
+    acc = accounts.get(active_email, {})
+    plan = q.get("plan") or acc.get("plan", "Free")
+
+    c5 = q.get("claude_5h")
+    cw = q.get("claude_wk")
+    g5 = q.get("gemini_5h")
+    gw = q.get("gemini_wk")
+    ar = q.get("argon_pct")
+    crst = format_reset_time(q.get("claude_reset"))
+
+    short_email = active_email.split("@")[0]
+
+    # Quota values and labels
+    if c5 is not None:
+        c_str = f"0% ({crst})" if (c5 == 0 and crst) else f"{c5}%"
+        c_val = c5
+    elif cw is not None:
+        c_str = f"0% ({crst})" if (cw == 0 and crst) else f"{cw}%"
+        c_val = cw
+    else:
+        c_str = "--"
+        c_val = None
+
+    if g5 is not None:
+        g_str = f"{g5}%"
+        g_val = g5
+    elif gw is not None:
+        g_str = f"{gw}%"
+        g_val = gw
+    else:
+        g_str = "--"
+        g_val = None
+
+    if fmt == "json":
+        return json.dumps({
+            "email": active_email,
+            "short_email": short_email,
+            "plan": plan,
+            "claude_display": c_str,
+            "gemini_display": g_str,
+            "argon_display": f"{ar}%" if ar is not None else "--",
+            "claude_val": c_val,
+            "gemini_val": g_val,
+            "argon_val": ar,
+            "claude_reset": crst
+        })
+
+    if fmt == "plain":
+        ar_part = f" ⚛A:{ar}%" if ar is not None else ""
+        return f"[{short_email}|{plan}] ⚡C:{c_str} ♊G:{g_str}{ar_part}"
+
+    if fmt == "tmux":
+        def tmux_color(v):
+            if v is None:
+                return "#[fg=colour244]"
+            if v >= 50:
+                return "#[fg=colour84,bold]"
+            if v >= 15:
+                return "#[fg=colour221,bold]"
+            return "#[fg=colour203,bold]"
+
+        col_c = tmux_color(c_val)
+        col_g = tmux_color(g_val)
+        col_a = tmux_color(int(round(ar)) if ar is not None else None)
+
+        plan_color = "#[fg=colour141,bold]" if plan == "Pro" else ("#[fg=colour75,bold]" if plan == "Plus" else "#[fg=colour248]")
+        ar_part = f" #[default]⚛{col_a}{ar}%#[default]" if ar is not None else ""
+        return f"#[fg=colour117,bold]{short_email} {plan_color}[{plan}]#[default] ⚡{col_c}{c_str}#[default] ♊{col_g}{g_str}{ar_part}"
+
+    # Default: ANSI for terminal prompt
+    def ansi_color(v):
+        if v is None:
+            return "\033[90m"
+        if v >= 50:
+            return "\033[1;32m"
+        if v >= 15:
+            return "\033[1;33m"
+        return "\033[1;31m"
+
+    col_c = ansi_color(c_val)
+    col_g = ansi_color(g_val)
+    col_a = ansi_color(int(round(ar)) if ar is not None else None)
+    rst = "\033[0m"
+
+    plan_color = "\033[1;35m" if plan == "Pro" else ("\033[1;34m" if plan == "Plus" else "\033[90m")
+    ar_part = f" ⚛{col_a}{ar}%{rst}" if ar is not None else ""
+    return f"\033[1;36m{short_email}{rst} {plan_color}[{plan}]{rst} ⚡{col_c}{c_str}{rst} ♊{col_g}{g_str}{rst}{ar_part}"
+
+
+def send_desktop_notification(title: str, message: str, urgency: str = "normal"):
+    """Send a native desktop notification via notify-send if available."""
+    try:
+        subprocess.run(
+            ["notify-send", "-a", "Antigravity Switcher", "-i", "dialog-information", "-u", urgency, title, message],
+            check=False
+        )
+    except Exception:
+        pass
+
+
+def watch_quotas_loop(interval: int = 60, foreground: bool = False):
+    """
+    Monitor accounts and fire a desktop notification whenever an exhausted
+    account's quota has completed its cooldown and reset!
+    """
+    ensure_dirs()
+    if foreground:
+        print(f"[*] Menjalankan Antigravity Quota Watcher (cek tiap {interval}s)...")
+        print("[*] Tekan Ctrl+C untuk berhenti.\n")
+
+    exhausted_state = {}
+    if EXHAUSTED_STATE_FILE.exists():
+        try:
+            with open(EXHAUSTED_STATE_FILE, "r", encoding="utf-8") as f:
+                exhausted_state = json.load(f)
+        except Exception:
+            exhausted_state = {}
+
+    while True:
+        try:
+            quotas = get_9router_quotas(force_refresh=True)
+            accounts = load_accounts()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            log_entries = []
+
+            for email, q in quotas.items():
+                if not q:
+                    continue
+                plan = q.get("plan") or accounts.get(email, {}).get("plan", "Free")
+                c_5h = q.get("claude_5h")
+                c_wk = q.get("claude_wk")
+
+                is_currently_exhausted = (c_5h == 0) or (c_5h is None and c_wk == 0)
+                was_exhausted = exhausted_state.get(email, {}).get("is_exhausted", False)
+
+                if was_exhausted and not is_currently_exhausted:
+                    # Cooldown finished, quota restored!
+                    c_pct = f"{c_5h}%" if c_5h is not None else f"{c_wk}%"
+                    g_pct = f"{q.get('gemini_5h')}%" if q.get('gemini_5h') is not None else f"{q.get('gemini_wk')}%"
+                    title = "⚡ Kuota Google One Reset!"
+                    body = f"Akun {email} ({plan}) kuota Claude & GPT-nya sudah reset dan siap digunakan kembali!\nClaude: {c_pct} | Gemini: {g_pct}"
+
+                    send_desktop_notification(title, body, urgency="normal")
+                    log_msg = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] NOTIFIKASI: {email} ({plan}) pulih ke {c_pct}"
+                    log_entries.append(log_msg)
+                    if foreground:
+                        print(f"[✔] {log_msg}")
+
+                exhausted_state[email] = {
+                    "is_exhausted": is_currently_exhausted,
+                    "plan": plan,
+                    "claude_5h": c_5h,
+                    "claude_wk": c_wk,
+                    "last_checked": now_iso
+                }
+
+            with open(EXHAUSTED_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(exhausted_state, f, indent=2)
+
+            if log_entries:
+                with open(DAEMON_LOG_FILE, "a", encoding="utf-8") as f:
+                    for l in log_entries:
+                        f.write(l + "\n")
+
+            if foreground:
+                now_str = datetime.now().strftime("%H:%M:%S")
+                print(f"[{now_str}] Memeriksa {len(quotas)} akun. Cek berikutnya dalam {interval}s...")
+
+        except KeyboardInterrupt:
+            if foreground:
+                print("\n[*] Quota watcher dihentikan.")
+            break
+        except Exception as e:
+            if foreground:
+                print(f"[!] Quota watcher error: {e}")
+
+        time.sleep(interval)
+
+
+def daemon_start():
+    """Start the quota watcher loop as a detached background daemon."""
+    ensure_dirs()
+    if DAEMON_PID_FILE.exists():
+        try:
+            pid = int(DAEMON_PID_FILE.read_text().strip())
+            os.kill(pid, 0)
+            print(f"[INFO] Daemon watcher sudah berjalan di latar belakang (PID: {pid}).")
+            return
+        except (ProcessLookupError, ValueError):
+            DAEMON_PID_FILE.unlink(missing_ok=True)
+
+    log_file = open(DAEMON_LOG_FILE, "a", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "watch", "--quiet"],
+        stdout=log_file,
+        stderr=log_file,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True
+    )
+    DAEMON_PID_FILE.write_text(str(proc.pid))
+    print(f"[SUCCESS] Daemon watcher berhasil dijalankan di background (PID: {proc.pid}).")
+    print(f"Log: {DAEMON_LOG_FILE}")
+    send_desktop_notification("Antigravity Watcher Aktif", f"Background watcher aktif (PID {proc.pid}). Kamu akan diberi notifikasi saat kuota akun Pro kamu reset!")
+
+
+def daemon_stop():
+    """Stop the background daemon process."""
+    if not DAEMON_PID_FILE.exists():
+        print("[INFO] Background daemon sedang tidak berjalan.")
+        return
+    try:
+        pid = int(DAEMON_PID_FILE.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.5)
+        try:
+            os.kill(pid, 0)
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        DAEMON_PID_FILE.unlink(missing_ok=True)
+        print(f"[SUCCESS] Daemon watcher (PID: {pid}) berhasil dihentikan.")
+    except Exception as e:
+        DAEMON_PID_FILE.unlink(missing_ok=True)
+        print(f"[INFO] Daemon process dihentikan: {e}")
+
+
+def daemon_status() -> bool:
+    """Check the status of the background daemon."""
+    if not DAEMON_PID_FILE.exists():
+        print("[STATUS] Background daemon: NON-AKTIF (Berhenti)")
+        return False
+    try:
+        pid = int(DAEMON_PID_FILE.read_text().strip())
+        os.kill(pid, 0)
+        print(f"[STATUS] Background daemon: AKTIF (Berjalan, PID {pid})")
+        print(f"Log: {DAEMON_LOG_FILE}")
+        return True
+    except ProcessLookupError:
+        DAEMON_PID_FILE.unlink(missing_ok=True)
+        print("[STATUS] Background daemon: NON-AKTIF (Stale PID dibersihkan)")
+        return False
+
+
 def interactive_menu():
     """Full interactive TUI for choosing accounts, sorting, and actions."""
     cfg = load_config()
@@ -1254,6 +1517,7 @@ def interactive_menu():
         print("  [a]    Add/login new Google account")
         print("  [s]    Sync active token from keyring")
         print("  [d]    Delete a saved account")
+        print("  [w]    Daemon Watcher & Notifikasi Desktop (Start/Stop/Status)")
         print("  [t]    Test current account with 'agy models'")
         print("  [g]    Launch Graphical GUI dialog (Zenity)")
         print("  [q]    Quit\n")
@@ -1319,6 +1583,22 @@ def interactive_menu():
             else:
                 print("Akun tidak ditemukan.")
             input("Tekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() in ["w", "daemon", "watch"]:
+            print("\nOpsi Daemon Watcher:")
+            print("  1. Cek status daemon")
+            print("  2. Start background daemon")
+            print("  3. Stop background daemon")
+            print("  4. Jalankan watcher di foreground (monitor live)")
+            sub_c = input("Pilih opsi [1-4]: ").strip()
+            if sub_c == "1":
+                daemon_status()
+            elif sub_c == "2":
+                daemon_start()
+            elif sub_c == "3":
+                daemon_stop()
+            elif sub_c == "4":
+                watch_quotas_loop(interval=30, foreground=True)
+            input("\nTekan [ENTER] untuk kembali ke menu...")
         elif choice.lower() == "t":
             print("\nMenjalankan 'agy --dangerously-skip-permissions models' untuk menguji akun aktif...")
             subprocess.run(["agy", "--dangerously-skip-permissions", "models"])
@@ -1500,6 +1780,39 @@ def main():
     elif cmd in ["test"]:
         print("Testing current active account with 'agy --dangerously-skip-permissions models'...")
         subprocess.run(["agy", "--dangerously-skip-permissions", "models"])
+    elif cmd in ["statusline", "prompt", "bar"]:
+        fmt = "ansi"
+        if "--tmux" in args:
+            fmt = "tmux"
+        elif "--plain" in args:
+            fmt = "plain"
+        elif "--json" in args:
+            fmt = "json"
+        print(generate_statusline(fmt=fmt))
+    elif cmd in ["watch", "monitor"]:
+        quiet = "--quiet" in args
+        interval = 60
+        for i, a in enumerate(args):
+            if a in ["--interval", "-i"] and i + 1 < len(args):
+                try:
+                    interval = int(args[i + 1])
+                except ValueError:
+                    pass
+        watch_quotas_loop(interval=interval, foreground=not quiet)
+    elif cmd in ["daemon"]:
+        sub = args[1].lower() if len(args) > 1 else "status"
+        if sub in ["start", "run"]:
+            daemon_start()
+        elif sub in ["stop", "kill"]:
+            daemon_stop()
+        elif sub in ["status", "check"]:
+            daemon_status()
+        elif sub in ["restart"]:
+            daemon_stop()
+            time.sleep(1)
+            daemon_start()
+        else:
+            print("Usage: agys daemon <start|stop|status|restart>")
     elif cmd in ["gui", "--gui"]:
         launch_gui()
     elif cmd in ["help", "--help", "-h"]:
@@ -1513,6 +1826,9 @@ Usage:
   agys sort <quota|plan|email>       Set default sorting preference
   agys use <email|index|auto> [-c]   Switch account immediately (add -c to resume conversation)
   agys resume [conversation_id]      Interactive conversation picker to resume session in agy (alias: agys c)
+  agys statusline [--tmux|--plain]   One-line compact quota for Tmux, Zsh RPROMPT, or polybar
+  agys daemon <start|stop|status>    Background watcher that sends desktop notifications when quotas reset
+  agys watch [--interval 60]         Run quota reset monitor in foreground
   agys save [label]                  Save currently active account in keyring
   agys label [email|index] [label]   Update account label (alias: rename)
   agys current                       Show currently active account in agy

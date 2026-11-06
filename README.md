@@ -114,6 +114,9 @@ When a terminal hits a 5-hour or weekly quota limit:
 | `agys sort <mode>` | Change default sorting preference (`quota` \| `plan` \| `email`) |
 | `agys use <acc> [-c]` | Switch account immediately (accepts index, email, or `auto`) |
 | `agys resume [id]` / `agys c` | Interactive conversation picker to resume session in `agy` |
+| `agys statusline [--tmux\|--plain]` | Sub-millisecond quota string for Tmux, Zsh RPROMPT, or polybar |
+| `agys daemon <start\|stop\|status>` | Background watcher that sends desktop notifications when quotas reset |
+| `agys watch [--interval 60]` | Run quota reset monitor in foreground |
 | `agys add` | Login and add a new Google account via OAuth |
 | `agys current` / `agys whoami` | Show currently active account in system keyring |
 | `agys sync` | Sync active keyring token into switcher storage |
@@ -121,6 +124,62 @@ When a terminal hits a 5-hour or weekly quota limit:
 | `agys remove <acc>` | Remove an account from switcher vault |
 | `agys test` | Test current credentials with `agy models` |
 | `agys gui` | Open native desktop GTK dialog (Zenity) |
+
+---
+
+## 🔔 Background Watcher & Desktop Notifications
+
+Never wonder when your Google One Pro cooldown has ended. The built-in daemon monitors quota states in the background and sends a native Linux desktop notification (`notify-send`) the moment your 5-hour quota has reset:
+
+```bash
+# Start watcher in the background (detached)
+agys daemon start
+
+# Check running status
+agys daemon status
+
+# Stop background watcher
+agys daemon stop
+
+# Or run live in foreground terminal
+agys watch
+```
+
+When an account finishes cooldown, you'll receive a desktop notification:
+> **⚡ Kuota Google One Reset!**  
+> *Akun agam.pro234@gmail.com (Pro) kuota Claude & GPT-nya sudah reset dan siap digunakan kembali!*
+
+---
+
+## 📟 Tmux & Shell Statusline Integration
+
+`agys statusline` executes in **< 1ms** by reading cached quotas, making it ideal for shell prompts and Tmux statusbars without introducing lag:
+
+```bash
+# ANSI colored (for Zsh / Bash prompts)
+agys statusline
+
+# Plain text
+agys statusline --plain
+# => [agamgans234|Plus] ⚡C:100% ♊G:100%
+
+# Tmux formatted colors
+agys statusline --tmux
+```
+
+### 1. Add to Tmux Statusbar (`~/.tmux.conf`)
+```tmux
+# Refresh statusline every 15 seconds
+set -g status-interval 15
+set -g status-right-length 120
+set -g status-right "#(agys statusline --tmux) | %H:%M "
+```
+
+### 2. Add to Zsh Right Prompt (`~/.zshrc`)
+```zsh
+# Show active account & remaining quota on the right side of prompt
+RPROMPT='$(agys statusline)'
+```
 
 ---
 
