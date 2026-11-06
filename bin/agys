@@ -1,0 +1,1538 @@
+#!/usr/bin/env python3
+"""
+Antigravity CLI Account Switcher (agy-switch / agys)
+Allows fast, seamless switching between multiple Google One Pro accounts in Antigravity CLI (agy)
+without repeatedly logging out and going through browser authentication.
+"""
+
+import sys
+import os
+import json
+import time
+import stat
+import shutil
+import hashlib
+import sqlite3
+import subprocess
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+
+# Try importing rich for enhanced UI; fallback gracefully if not present
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.live import Live
+    from rich.spinner import Spinner
+    from rich import box
+    from rich import print as rprint
+    HAS_RICH = True
+except ImportError:
+    HAS_RICH = False
+
+# Import keyring
+try:
+    import keyring
+except ImportError:
+    print("[ERROR] Python 'keyring' module is required. Please install it with 'pip install keyring'.", file=sys.stderr)
+    sys.exit(1)
+
+# Constants for Antigravity CLI keyring storage
+SERVICE_NAME = "gemini"
+USERNAME = "antigravity"
+
+CONFIG_DIR = Path.home() / ".config" / "antigravity-switcher"
+ACCOUNTS_DIR = CONFIG_DIR / "accounts"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+QUOTA_CACHE_FILE = CONFIG_DIR / "quota-cache.json"
+CACHE_TTL = 90  # seconds
+
+console = Console() if HAS_RICH else None
+
+
+def ensure_dirs():
+    """Ensure configuration and accounts directories exist with secure permissions (0700)."""
+    if not CONFIG_DIR.exists():
+        CONFIG_DIR.mkdir(parents=True, mode=0o700)
+    else:
+        os.chmod(CONFIG_DIR, 0o700)
+
+    if not ACCOUNTS_DIR.exists():
+        ACCOUNTS_DIR.mkdir(parents=True, mode=0o700)
+    else:
+        os.chmod(ACCOUNTS_DIR, 0o700)
+
+
+def get_active_keyring_data() -> dict | None:
+    """Read and parse the current active credential stored in keyring."""
+    try:
+        secret = keyring.get_password(SERVICE_NAME, USERNAME)
+        if not secret:
+            return None
+        return json.loads(secret)
+    except Exception:
+        return None
+
+
+def set_active_keyring_data(data: dict) -> bool:
+    """Write the credential data to keyring."""
+    try:
+        secret_json = json.dumps(data)
+        keyring.set_password(SERVICE_NAME, USERNAME, secret_json)
+        return True
+    except Exception as e:
+        if HAS_RICH:
+            console.print(f"[bold red]Failed to write to keyring:[/bold red] {e}")
+        else:
+            print(f"[ERROR] Failed to write to keyring: {e}", file=sys.stderr)
+        return False
+
+
+def delete_active_keyring_data() -> bool:
+    """Delete current credential from keyring."""
+    try:
+        keyring.delete_password(SERVICE_NAME, USERNAME)
+        return True
+    except Exception:
+        return False
+
+
+def get_active_email() -> str | None:
+    """Return the email of the account currently active in keyring."""
+    data = get_active_keyring_data()
+    if data and "id_token_email" in data:
+        return data["id_token_email"]
+    return None
+
+
+def parse_expiry(token_dict: dict) -> tuple[str, bool]:
+    """Parse expiry from token dict, return formatted string and is_expired bool."""
+    expiry_str = token_dict.get("expiry")
+    if not expiry_str:
+        return "Unknown", False
+    try:
+        if "." in expiry_str:
+            base, frac = expiry_str.split(".", 1)
+            offset_idx = -1
+            for sep in ["+", "-", "Z"]:
+                idx = frac.find(sep)
+                if idx != -1:
+                    offset_idx = idx
+                    break
+            if offset_idx != -1:
+                clean_frac = frac[:min(6, offset_idx)]
+                clean_iso = f"{base}.{clean_frac}{frac[offset_idx:]}"
+            else:
+                clean_iso = f"{base}.{frac[:6]}"
+        else:
+            clean_iso = expiry_str
+
+        exp_dt = datetime.fromisoformat(clean_iso)
+        now = datetime.now(timezone.utc)
+        is_expired = now > exp_dt
+        local_exp = exp_dt.astimezone()
+        return local_exp.strftime("%Y-%m-%d %H:%M"), is_expired
+    except Exception:
+        return expiry_str[:16], False
+
+
+def load_accounts() -> dict[str, dict]:
+    """Load all saved account records from ~/.config/antigravity-switcher/accounts/."""
+    ensure_dirs()
+    accounts = {}
+    for p in ACCOUNTS_DIR.glob("*.json"):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                email = data.get("email") or p.stem
+                accounts[email] = data
+        except Exception:
+            continue
+    return accounts
+
+
+def save_account_record(email: str, label: str | None = None, credential_data: dict | None = None) -> bool:
+    """Save or update an account record in the accounts directory."""
+    ensure_dirs()
+    if credential_data is None:
+        credential_data = get_active_keyring_data()
+        if not credential_data:
+            return False
+
+    account_file = ACCOUNTS_DIR / f"{email}.json"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    existing = {}
+    if account_file.exists():
+        try:
+            with open(account_file, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+
+    final_label = label if (label is not None and label.strip()) else existing.get("label", "Google One Pro")
+    created_at = existing.get("created_at", now_iso)
+
+    record = {
+        "email": email,
+        "label": final_label,
+        "created_at": created_at,
+        "last_used": existing.get("last_used", now_iso),
+        "auth_method": credential_data.get("auth_method", "consumer"),
+        "token": credential_data.get("token", {}),
+        "id_token_email": credential_data.get("id_token_email", email)
+    }
+
+    with open(account_file, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2)
+    os.chmod(account_file, 0o600)
+    return True
+
+
+def auto_sync_active():
+    """If the currently active account in keyring has a newer token, update its saved file."""
+    active_data = get_active_keyring_data()
+    if not active_data:
+        return
+    email = active_data.get("id_token_email")
+    if not email:
+        return
+
+    account_file = ACCOUNTS_DIR / f"{email}.json"
+    if account_file.exists():
+        save_account_record(email, label=None, credential_data=active_data)
+
+
+def load_config() -> dict:
+    """Load configuration from ~/.config/antigravity-switcher/config.json."""
+    ensure_dirs()
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"sort_by": "quota"}
+
+
+def save_config(cfg: dict):
+    """Save configuration to ~/.config/antigravity-switcher/config.json."""
+    ensure_dirs()
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
+
+
+def get_plan_badge(plan: str | None) -> str:
+    """Format subscription plan as a colored badge."""
+    p = (plan or "Free").capitalize()
+    if p == "Ultra":
+        return "[bold yellow]Ultra[/bold yellow]"
+    elif p == "Pro":
+        return "[bold magenta]Pro[/bold magenta]"
+    elif p == "Plus":
+        return "[bold cyan]Plus[/bold cyan]"
+    else:
+        return "[dim]Free[/dim]"
+
+
+def get_ordered_emails(accounts: dict, quotas: dict, mode: str = "quota") -> list[str]:
+    """
+    Return account emails ordered by:
+    - 'quota': Highest remaining quota first (exhausted accounts sink to bottom, sorted by soonest reset)
+    - 'plan':  Highest subscription tier first (Ultra > Pro > Plus > Free), then remaining quota
+    - 'email': Alphabetical by email address (A-Z)
+    """
+    tier_rank = {"Ultra": 4, "Pro": 3, "Plus": 2, "Free": 1}
+
+    def key_fn(email):
+        q = quotas.get(email, {}) or {}
+        acc = accounts.get(email, {})
+        plan = q.get("plan") or acc.get("plan") or "Free"
+        tr = tier_rank.get(plan, 0)
+
+        c_5h = q.get("claude_5h")
+        c_wk = q.get("claude_wk")
+        g_5h = q.get("gemini_5h")
+        g_wk = q.get("gemini_wk")
+
+        eff_claude = c_5h if c_5h is not None else (c_wk if c_wk is not None else 100)
+        eff_gemini = g_5h if g_5h is not None else (g_wk if g_wk is not None else 100)
+        is_exhausted = (c_5h == 0) or (c_wk == 0)
+
+        if mode == "plan":
+            # Highest tier first, non-exhausted before exhausted, then highest quota
+            return (tr, -1 if is_exhausted else 1, eff_claude, eff_gemini)
+        elif mode == "quota":
+            is_exhausted = (c_5h == 0 and c_wk == 0) or (c_wk == 0 and c_5h is None)
+            if is_exhausted:
+                # Rank exhausted accounts by soonest reset time
+                rst_ts = 9999999999.0
+                reset_iso = q.get("claude_reset")
+                if reset_iso:
+                    try:
+                        rst_dt = datetime.fromisoformat(reset_iso.replace("Z", "+00:00"))
+                        rst_ts = rst_dt.timestamp()
+                    except Exception:
+                        pass
+                return (-1, -rst_ts, tr, eff_gemini)
+
+            has_5h = (c_5h is not None and c_5h > 0)
+            val_5h = c_5h if has_5h else 0
+            val_wk = c_wk if c_wk is not None else 0
+
+            # Priority 1: Accounts with remaining 5h quota (highest 5h %, then weekly %, then tier)
+            # Priority 2: Accounts with remaining weekly quota (highest weekly %, then tier)
+            return (2 if has_5h else 1, val_5h, val_wk, tr, eff_gemini)
+        else:  # email / alphabetical
+            return email
+
+    if mode in ["quota", "plan"]:
+        return sorted(accounts.keys(), key=key_fn, reverse=True)
+    return sorted(accounts.keys())
+
+
+def resolve_account(identifier: str, ordered_emails: list[str] | None = None) -> tuple[str, dict] | None:
+    """Resolve an account by 1-based index (matching current sort order), exact email, or substring."""
+    accounts = load_accounts()
+    if ordered_emails is None:
+        cfg = load_config()
+        quotas = get_9router_quotas(force_refresh=False)
+        ordered_emails = get_ordered_emails(accounts, quotas, mode=cfg.get("sort_by", "quota"))
+
+    # Try 1-based index
+    if identifier.isdigit():
+        idx = int(identifier) - 1
+        if 0 <= idx < len(ordered_emails):
+            email = ordered_emails[idx]
+            return email, accounts[email]
+
+    # Try exact match
+    if identifier in accounts:
+        return identifier, accounts[identifier]
+
+    # Try case-insensitive prefix/substring match
+    ident_lower = identifier.lower()
+    matches = [e for e in ordered_emails if ident_lower in e.lower() or ident_lower in accounts[e].get("label", "").lower()]
+    if len(matches) == 1:
+        email = matches[0]
+        return email, accounts[email]
+
+    return None
+
+
+def switch_account(identifier: str, ordered_emails: list[str] | None = None) -> bool:
+    """Switch the active account in keyring to the target account."""
+    auto_sync_active()
+
+    res = resolve_account(identifier, ordered_emails=ordered_emails)
+    if not res:
+        msg = f"Account '{identifier}' not found."
+        if HAS_RICH:
+            console.print(f"[bold red]Error:[/bold red] {msg}")
+        else:
+            print(f"[ERROR] {msg}", file=sys.stderr)
+        return False
+
+    target_email, record = res
+    cred_blob = {
+        "token": record.get("token", {}),
+        "auth_method": record.get("auth_method", "consumer"),
+        "id_token_email": target_email
+    }
+
+    if not set_active_keyring_data(cred_blob):
+        return False
+
+    # Update last_used timestamp
+    record["last_used"] = datetime.now(timezone.utc).isoformat()
+    account_file = ACCOUNTS_DIR / f"{target_email}.json"
+    with open(account_file, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2)
+
+    plan_str = record.get("plan", "")
+    lbl = record.get("label", "")
+    detail_str = f" ({plan_str} - {lbl})" if (lbl and lbl != plan_str) else (f" ({plan_str})" if plan_str else "")
+    msg = f"Switched active account to: {target_email}{detail_str}"
+    if HAS_RICH:
+        console.print(Panel(f"[bold green]✔ {msg}[/bold green]\n[dim]Antigravity CLI (agy) is ready to use with this account.[/dim]", border_style="green"))
+    else:
+        print(f"[SUCCESS] {msg}")
+        print("Antigravity CLI (agy) is ready to use with this account.")
+    return True
+
+
+def get_9router_auth() -> str | None:
+    """Generate auth token for local 9Router instance."""
+    mid_file = Path.home() / ".9router" / "machine-id"
+    sec_file = Path.home() / ".9router" / "auth" / "cli-secret"
+    if not mid_file.exists() or not sec_file.exists():
+        return None
+    try:
+        mid = mid_file.read_text(encoding="utf-8").strip()
+        sec = sec_file.read_text(encoding="utf-8").strip()
+        return hashlib.sha256((mid + "9r-cli-auth" + sec).encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return None
+
+
+def format_reset_time(reset_iso: str | None) -> str:
+    """Format ISO reset timestamp to short relative time (e.g. 'in 4h 50m')."""
+    if not reset_iso:
+        return ""
+    try:
+        reset_dt = datetime.fromisoformat(reset_iso.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        diff = reset_dt - now
+        total_sec = int(diff.total_seconds())
+        if total_sec <= 0:
+            return "now"
+        hrs = total_sec // 3600
+        mins = (total_sec % 3600) // 60
+        days = total_sec // 86400
+        if days > 0:
+            return f"in {days}d {hrs%24}h"
+        elif hrs > 0:
+            return f"in {hrs}h {mins}m"
+        else:
+            return f"in {mins}m"
+    except Exception:
+        return ""
+
+
+def get_9router_quotas(force_refresh: bool = False, timeout: float = 6.0) -> dict[str, dict]:
+    """
+    Fetch usage quota and subscription plan from local 9Router instance, cached for CACHE_TTL seconds.
+    Returns dict: { email: { 'plan': str, 'gemini_5h': int|None, 'gemini_wk': int|None,
+                            'claude_5h': int|None, 'claude_wk': int|None,
+                            'gemini_reset': str|None, 'claude_reset': str|None, 'raw': dict } }
+    """
+    now = time.time()
+    ensure_dirs()
+    if not force_refresh and QUOTA_CACHE_FILE.exists():
+        try:
+            with open(QUOTA_CACHE_FILE, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+                if now - cache.get("timestamp", 0) < CACHE_TTL:
+                    return cache.get("quotas", {})
+        except Exception:
+            pass
+
+    token = get_9router_auth()
+    db_path = Path.home() / ".9router" / "db" / "data.sqlite"
+    if not token or not db_path.exists():
+        return {}
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        c = conn.cursor()
+        c.execute("SELECT id, email FROM providerConnections WHERE provider = 'antigravity'")
+        rows = c.fetchall()
+        conn.close()
+    except Exception:
+        return {}
+
+    if not rows:
+        return {}
+
+    def fetch_one(row):
+        cid, email = row
+        req = urllib.request.Request(f"http://127.0.0.1:20128/api/usage/{cid}")
+        req.add_header("x-9r-cli-token", token)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode())
+                return email, data
+        except Exception:
+            return email, None
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        results = dict(ex.map(fetch_one, rows))
+
+    quotas_map = {}
+    for email, data in results.items():
+        if not data:
+            quotas_map[email] = None
+            continue
+
+        # Extract subscription plan from 9Router response
+        sub = data.get("subscriptionInfo", {}) or {}
+        paid = sub.get("paidTier") or {}
+        tier_id = (paid.get("id") or "").lower()
+        tier_name = (paid.get("name") or "").lower()
+        if "ultra" in tier_id or "ultra" in tier_name:
+            plan = "Ultra"
+        elif "pro" in tier_id or "pro" in tier_name:
+            plan = "Pro"
+        elif "plus" in tier_id or "plus" in tier_name:
+            plan = "Plus"
+        else:
+            plan = "Free"
+
+        q = data.get("quotas", {}) or {}
+        g_sess = q.get("gemini_session", {}) or {}
+        c_sess = q.get("claude_gpt_session", {}) or {}
+        g_wk = q.get("gemini_weekly", {}) or {}
+        c_wk = q.get("claude_gpt_weekly", {}) or {}
+
+        g_5h = g_sess.get("remainingPercentage")
+        c_5h = c_sess.get("remainingPercentage")
+        g_w_pct = g_wk.get("remainingPercentage")
+        c_w_pct = c_wk.get("remainingPercentage")
+
+        # Extract Gemini 4 Argon quota
+        argon_obj = q.get("gemini-4-argon-high") or q.get("gemini-4-argon-medium") or q.get("gemini-4-argon-low") or {}
+        argon_pct = argon_obj.get("remainingPercentage")
+        argon_rst = argon_obj.get("resetAt")
+        argon_val = None
+        if argon_pct is not None:
+            argon_val = round(argon_pct, 1) if argon_pct < 1 else round(argon_pct)
+
+        quotas_map[email] = {
+            "plan": plan,
+            "gemini_5h": round(g_5h) if g_5h is not None else None,
+            "gemini_wk": round(g_w_pct) if g_w_pct is not None else None,
+            "claude_5h": round(c_5h) if c_5h is not None else None,
+            "claude_wk": round(c_w_pct) if c_w_pct is not None else None,
+            "argon_pct": argon_val,
+            "argon_reset": argon_rst,
+            "gemini_reset": g_sess.get("resetAt") or g_wk.get("resetAt"),
+            "claude_reset": c_sess.get("resetAt") or c_wk.get("resetAt"),
+            "raw": q,
+        }
+
+        # Auto-update saved account JSON with detected plan
+        account_file = ACCOUNTS_DIR / f"{email}.json"
+        if account_file.exists():
+            try:
+                with open(account_file, "r", encoding="utf-8") as f:
+                    acc_rec = json.load(f)
+                if acc_rec.get("plan") != plan:
+                    acc_rec["plan"] = plan
+                    with open(account_file, "w", encoding="utf-8") as f:
+                        json.dump(acc_rec, f, indent=2)
+            except Exception:
+                pass
+
+    try:
+        with open(QUOTA_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"timestamp": now, "quotas": quotas_map}, f, indent=2)
+    except Exception:
+        pass
+
+    return quotas_map
+
+
+def format_quota_badge(q: dict | None, kind: str = "claude") -> tuple[str, str]:
+    """Return (rich_str, plain_str) for table view."""
+    if not q:
+        return "[dim]N/A[/dim]", "N/A"
+
+    val_5h = q.get(f"{kind}_5h")
+    val_wk = q.get(f"{kind}_wk")
+    reset_iso = q.get(f"{kind}_reset")
+    reset_str = format_reset_time(reset_iso)
+
+    def color_val(v):
+        if v is None:
+            return "[dim]--[/dim]"
+        if v >= 50:
+            return f"[bold green]{v}%[/bold green]"
+        if v >= 15:
+            return f"[bold yellow]{v}%[/bold yellow]"
+        return f"[bold red]{v}%[/bold red]"
+
+    if val_5h is not None and val_wk is not None:
+        c_5h = color_val(val_5h)
+        c_wk = color_val(val_wk)
+        if val_5h == 0 and reset_str:
+            rich_text = f"{c_5h} [dim]({reset_str})[/dim] | {c_wk} [dim]wk[/dim]"
+            plain_text = f"{val_5h}% ({reset_str}) | {val_wk}% wk"
+        else:
+            rich_text = f"{c_5h} | {c_wk} [dim]wk[/dim]"
+            plain_text = f"{val_5h}% | {val_wk}% wk"
+    elif val_wk is not None:
+        c_wk = color_val(val_wk)
+        rich_text = f"{c_wk} [dim]wk[/dim]"
+        plain_text = f"{val_wk}% wk"
+    else:
+        rich_text = "[dim]N/A[/dim]"
+        plain_text = "N/A"
+
+    return rich_text, plain_text
+
+
+def format_argon_badge(q: dict | None) -> tuple[str, str]:
+    """Return (rich_str, plain_str) for Argon quota."""
+    if not q:
+        return "[dim]--[/dim]", "--"
+    val = q.get("argon_pct")
+    if val is None:
+        return "[dim]--[/dim]", "--"
+    rst = format_reset_time(q.get("argon_reset"))
+    if val == 0:
+        if rst:
+            return f"[bold red]0%[/bold red] [dim]({rst})[/dim]", f"0% ({rst})"
+        return "[bold red]0%[/bold red]", "0%"
+    if val < 1:
+        return f"[bold yellow]{val:.1f}%[/bold yellow]", f"{val:.1f}%"
+    col = "green" if val >= 50 else ("yellow" if val >= 15 else "red")
+    return f"[bold {col}]{int(val)}%[/bold {col}]", f"{int(val)}%"
+
+
+def make_bar(pct: int | None, width: int = 8) -> str:
+    """Generate a visual ASCII/Unicode progress bar with colors."""
+    if pct is None:
+        return "[dim]" + "─" * width + "[/dim]"
+    pct = max(0, min(100, pct))
+    filled = int(round((pct / 100.0) * width))
+    empty = width - filled
+    if pct >= 50:
+        color = "bold green"
+    elif pct >= 15:
+        color = "bold yellow"
+    else:
+        color = "bold red"
+    return f"[{color}]" + "█" * filled + f"[/{color}][dim]" + "░" * empty + "[/dim]"
+
+
+def show_quota_tracker(force_refresh: bool = False, sort_by: str | None = None):
+    """Display a full detailed quota tracker dashboard with progress bars and subscription plans."""
+    auto_sync_active()
+    accounts = load_accounts()
+    active_email = get_active_email()
+
+    if HAS_RICH:
+        with console.status("[bold cyan]Memuat data kuota & paket dari 9Router...[/bold cyan]", spinner="dots"):
+            quotas = get_9router_quotas(force_refresh=force_refresh)
+    else:
+        print("Memuat data kuota & paket dari 9Router...")
+        quotas = get_9router_quotas(force_refresh=force_refresh)
+
+    if not quotas:
+        msg = "Tidak dapat terhubung ke 9Router (port 20128) atau belum ada akun Antigravity terdaftar di 9Router."
+        if HAS_RICH:
+            console.print(Panel(f"[yellow]{msg}[/yellow]", border_style="yellow"))
+        else:
+            print(f"[WARNING] {msg}")
+        return
+
+    cfg = load_config()
+    active_sort = sort_by or cfg.get("sort_by", "quota")
+    ordered_emails = get_ordered_emails(accounts, quotas, mode=active_sort)
+
+    sort_labels = {
+        "quota": "Sisa Kuota Terbanyak",
+        "plan": "Paket Subscription (Pro > Plus > Free)",
+        "email": "Email (A-Z)"
+    }
+    sort_name = sort_labels.get(active_sort, active_sort.capitalize())
+
+    if HAS_RICH:
+        table = Table(
+            title=f"Antigravity API Quota Tracker (9Router)  •  Sort: [bold green]{sort_name}[/bold green]",
+            header_style="bold magenta",
+            border_style="bright_blue"
+        )
+        table.add_column("#", justify="center", style="cyan", width=3)
+        table.add_column("Status", justify="center", width=9)
+        table.add_column("Email", style="bold white")
+        table.add_column("Plan", justify="center", width=6)
+        table.add_column("Claude & GPT (5h)", justify="left")
+        table.add_column("Claude (Weekly)", justify="left")
+        table.add_column("Gemini (5h)", justify="left")
+        table.add_column("Gemini (Weekly)", justify="left")
+        table.add_column("Gemini 4 Argon", justify="left")
+
+        for idx, email in enumerate(ordered_emails, start=1):
+            acc = accounts[email]
+            is_active = (email == active_email)
+            status = "[bold green]ACTIVE ●[/bold green]" if is_active else "[dim]SAVED ○[/dim]"
+            q = quotas.get(email)
+            detected_plan = (q.get("plan") if q else None) or acc.get("plan") or "Free"
+            plan_badge = get_plan_badge(detected_plan)
+
+            if q:
+                c_5h = q.get("claude_5h")
+                c_wk = q.get("claude_wk")
+                g_5h = q.get("gemini_5h")
+                g_wk = q.get("gemini_wk")
+                a_pct = q.get("argon_pct")
+                c_rst = format_reset_time(q.get("claude_reset"))
+                g_rst = format_reset_time(q.get("gemini_reset"))
+                a_rst = format_reset_time(q.get("argon_reset"))
+
+                def format_col(val, rst):
+                    if val is None:
+                        return "[dim]--[/dim]"
+                    bar = make_bar(int(round(val)) if val is not None else 0, 8)
+                    if val == 0 and rst:
+                        return f"{bar} [bold red]0%[/bold red] [dim]({rst})[/dim]"
+                    if val < 1:
+                        return f"{bar} [bold yellow]{val:.1f}%[/bold yellow]"
+                    col = "green" if val >= 50 else ("yellow" if val >= 15 else "red")
+                    return f"{bar} [bold {col}]{int(val):>3}%[/bold {col}]"
+
+                c_5h_str = format_col(c_5h, c_rst)
+                c_wk_str = format_col(c_wk, c_rst)
+                g_5h_str = format_col(g_5h, g_rst)
+                g_wk_str = format_col(g_wk, g_rst)
+                argon_str = format_col(a_pct, a_rst)
+            else:
+                c_5h_str = c_wk_str = g_5h_str = g_wk_str = argon_str = "[dim]N/A[/dim]"
+
+            table.add_row(
+                str(idx),
+                status,
+                email,
+                plan_badge,
+                c_5h_str,
+                c_wk_str,
+                g_5h_str,
+                g_wk_str,
+                argon_str
+            )
+
+        console.print(table)
+        console.print("[dim]Tips: Jalankan 'agys use <#>' untuk switch ke akun yang kuotanya masih banyak.[/dim]\n")
+    else:
+        print(f"\n--- Antigravity API Quota Tracker [Sort: {sort_name}] ---")
+        for idx, email in enumerate(ordered_emails, start=1):
+            acc = accounts[email]
+            q = quotas.get(email, {})
+            is_active = (email == active_email)
+            st = "[*] ACTIVE" if is_active else "[ ] SAVED "
+            detected_plan = (q.get("plan") if q else None) or acc.get("plan") or "Free"
+            print(f"[{idx}] {st} | {email:<28} | Plan: {detected_plan:<5}")
+            if q:
+                print(f"      Claude: 5h={q.get('claude_5h')}% | Wk={q.get('claude_wk')}%  ||  Gemini: 5h={q.get('gemini_5h')}% | Wk={q.get('gemini_wk')}%")
+            else:
+                print("      Quota: N/A")
+        print("-----------------------------------------------------------\n")
+
+
+def list_accounts_table(force_refresh: bool = False, sort_by: str | None = None) -> list[str]:
+    """
+    Display all saved accounts in a clean, formatted table with real-time quotas and subscription plans.
+    Returns the list of emails in the order displayed.
+    """
+    auto_sync_active()
+    accounts = load_accounts()
+    active_email = get_active_email()
+
+    if not accounts:
+        if active_email:
+            save_account_record(active_email, label="Primary Account")
+            accounts = load_accounts()
+        else:
+            if HAS_RICH:
+                console.print("[yellow]No accounts saved yet. Run 'agys add' to save an account.[/yellow]")
+            else:
+                print("No accounts saved yet. Run 'agys add' to save an account.")
+            return []
+
+    cfg = load_config()
+    active_sort = sort_by or cfg.get("sort_by", "quota")
+
+    # Fetch quota (uses cache if fresh)
+    quotas = get_9router_quotas(force_refresh=force_refresh)
+
+    # Sort accounts
+    ordered_emails = get_ordered_emails(accounts, quotas, mode=active_sort)
+
+    sort_labels = {
+        "quota": "Sisa Kuota Terbanyak",
+        "plan": "Paket Subscription (Pro > Plus > Free)",
+        "email": "Email (A-Z)"
+    }
+    sort_name = sort_labels.get(active_sort, active_sort.capitalize())
+
+    if HAS_RICH:
+        table = Table(
+            title=f"Google One Accounts (Antigravity Switcher)  •  Sort: [bold green]{sort_name}[/bold green]",
+            header_style="bold magenta",
+            border_style="bright_blue"
+        )
+        table.add_column("#", justify="center", style="cyan", width=3)
+        table.add_column("Status", justify="center", width=10)
+        table.add_column("Email", style="bold white")
+        table.add_column("Plan", justify="center", width=6)
+        table.add_column("Claude & GPT (5h | Wk)", justify="left")
+        table.add_column("Gemini (5h | Wk)", justify="left")
+        table.add_column("Argon", justify="left", width=14)
+        table.add_column("Label", style="cyan", width=8)
+
+        for idx, email in enumerate(ordered_emails, start=1):
+            acc = accounts[email]
+            is_active = (email == active_email)
+            status = "[bold green]ACTIVE ●[/bold green]" if is_active else "[dim]SAVED ○[/dim]"
+
+            q = quotas.get(email)
+            detected_plan = (q.get("plan") if q else None) or acc.get("plan") or "Free"
+            plan_badge = get_plan_badge(detected_plan)
+
+            c_rich, _ = format_quota_badge(q, "claude")
+            g_rich, _ = format_quota_badge(q, "gemini")
+            ar_rich, _ = format_argon_badge(q)
+
+            custom_label = acc.get("label", "")
+            if custom_label and custom_label.lower() not in [detected_plan.lower(), "google one pro", "google one"]:
+                label_disp = custom_label
+            else:
+                label_disp = "[dim]--[/dim]"
+
+            table.add_row(
+                str(idx),
+                status,
+                email,
+                plan_badge,
+                c_rich,
+                g_rich,
+                ar_rich,
+                label_disp
+            )
+        console.print(table)
+        if quotas:
+            console.print("[dim]📊 Tekan 'k' (kuota), 'p' (paket), 'e' (email) untuk ganti sorting. 'r' untuk refresh.[/dim]")
+    else:
+        print(f"\n--- Google One Accounts (Antigravity Switcher) [Sort: {sort_name}] ---")
+        for idx, email in enumerate(ordered_emails, start=1):
+            acc = accounts[email]
+            is_active = (email == active_email)
+            prefix = "[*] ACTIVE" if is_active else "[ ] SAVED "
+            q = quotas.get(email)
+            detected_plan = (q.get("plan") if q else None) or acc.get("plan") or "Free"
+            _, c_plain = format_quota_badge(q, "claude")
+            _, g_plain = format_quota_badge(q, "gemini")
+            print(f"[{idx}] {prefix} | {email:<28} | Plan: {detected_plan:<5} | Claude: {c_plain} | Gemini: {g_plain}")
+        print("-----------------------------------------------------------\n")
+
+    return ordered_emails
+
+
+def update_label_workflow(identifier: str | None = None, new_label: str | None = None):
+    """Update or rename the label for a saved account."""
+    accounts = load_accounts()
+    if not accounts:
+        print("[ERROR] Belum ada akun tersimpan di switcher.")
+        return
+
+    # If identifier not passed, ask user interactively
+    if not identifier:
+        list_accounts_table()
+        identifier = input("\nMasukkan nomor [#] atau email akun yang ingin diubah labelnya: ").strip()
+        if not identifier:
+            print("[INFO] Dibatalkan.")
+            return
+
+    res = resolve_account(identifier)
+    if not res:
+        print(f"[ERROR] Akun '{identifier}' tidak ditemukan.")
+        return
+
+    email, acc = res
+    current_label = acc.get("label", "Google One Pro")
+
+    # If new_label not passed, ask user interactively
+    if not new_label:
+        new_label = input(f"Masukkan label baru untuk {email} [{current_label}]: ").strip()
+        if not new_label:
+            new_label = current_label
+
+    acc["label"] = new_label
+    account_file = ACCOUNTS_DIR / f"{email}.json"
+    with open(account_file, "w", encoding="utf-8") as f:
+        json.dump(acc, f, indent=2)
+
+    msg = f"Berhasil memperbarui label untuk {email} menjadi: '{new_label}'"
+    if HAS_RICH:
+        console.print(Panel(f"[bold green]✔ {msg}[/bold green]", border_style="green"))
+    else:
+        print(f"[SUCCESS] {msg}")
+
+
+def add_account_workflow():
+    """Guide the user through adding a new Google One Pro account."""
+    auto_sync_active()
+    active_email = get_active_email()
+
+    if HAS_RICH:
+        console.print(Panel(
+            "[bold cyan]Tambah Akun Google One Pro Baru[/bold cyan]\n"
+            "Alur ini memungkinkan kamu login ke akun Google lain lewat browser OAuth.\n"
+            "Sesi akun kamu saat ini akan disimpan dengan aman sehingga bisa di-switch kapan saja.",
+            border_style="cyan"
+        ))
+    else:
+        print("\n=== Tambah Akun Google One Pro Baru ===")
+
+    label = input("\nMasukkan label akun baru (misal 'Google One Pro #2' / 'Akun Kantor') [Google One Pro]: ").strip()
+    if not label:
+        label = "Google One Pro"
+
+    # Backup current keyring data
+    current_data = get_active_keyring_data()
+    if current_data and active_email:
+        save_account_record(active_email, label=None, credential_data=current_data)
+        if HAS_RICH:
+            console.print(f"[dim]✔ Sesi akun aktif saat ini ({active_email}) berhasil diamankan.[/dim]")
+        else:
+            print(f"[INFO] Sesi akun aktif saat ini ({active_email}) berhasil diamankan.")
+
+    # Present methods
+    print("\nPilih metode penambahan akun:")
+    print("  [1] Buka 'agy' otomatis sekarang (Login di browser, lalu ketik /exit di agy setelah selesai)")
+    print("  [2] Mode Standby / Menunggu (Buka 'agy' manual di terminal lain, sistem ini akan otomatis mendeteksi)")
+    method = input("\nPilihan kamu [1/2] (default 1): ").strip()
+    if not method:
+        method = "1"
+
+    # Clear active keyring slot temporarily to force agy to prompt for login
+    delete_active_keyring_data()
+
+    if method == "2":
+        print("\n[INFO] Slot keyring telah dikosongkan.")
+        print("Silakan buka terminal lain dan jalankan perintah: agy")
+        print("Lakukan login browser dengan akun Google barumu.")
+        print("Sistem ini sedang menunggu login baru... (Tekan Ctrl+C untuk membatalkan)\n")
+
+        try:
+            start_time = time.time()
+            detected_data = None
+            while time.time() - start_time < 300:  # 5 minutes timeout
+                time.sleep(2)
+                check_data = get_active_keyring_data()
+                if check_data and check_data.get("id_token_email"):
+                    new_email = check_data["id_token_email"]
+                    if new_email != active_email or current_data is None:
+                        detected_data = check_data
+                        break
+                    elif current_data and check_data.get("token") != current_data.get("token"):
+                        detected_data = check_data
+                        break
+
+            if not detected_data:
+                print("\n[TIMEOUT] Tidak ada login baru terdeteksi dalam 5 menit.")
+                if current_data:
+                    set_active_keyring_data(current_data)
+                    print("[INFO] Mengembalikan akun sebelumnya.")
+                return
+
+            new_email = detected_data["id_token_email"]
+            save_account_record(new_email, label=label, credential_data=detected_data)
+            if HAS_RICH:
+                console.print(Panel(f"[bold green]✔ Berhasil mendeteksi dan menyimpan akun: {new_email} ({label})[/bold green]", border_style="green"))
+            else:
+                print(f"[SUCCESS] Berhasil mendeteksi dan menyimpan akun: {new_email} ({label})")
+            return
+        except KeyboardInterrupt:
+            print("\n\n[INFO] Dibatalkan oleh user. Mengembalikan akun sebelumnya...")
+            if current_data:
+                set_active_keyring_data(current_data)
+            return
+
+    # Method 1: Automatic Launch of `agy`
+    print("\n----------------------------------------------------------------------")
+    print("Antigravity CLI ('agy') akan diluncurkan.")
+    print("1. Tekan ENTER di agy untuk membuka link login Google di browser.")
+    print("2. Pilih akun Google One Pro baru kamu di browser dan berikan izin.")
+    print("3. Setelah browser menyatakan berhasil dan kamu masuk ke agy,")
+    print("   ketik /exit (atau tekan Ctrl+D) untuk keluar kembali ke switcher.")
+    print("----------------------------------------------------------------------")
+    input("\nTekan [ENTER] untuk meluncurkan 'agy' sekarang...")
+
+    try:
+        # Launch agy with auto-skip permissions (interactive login mode)
+        subprocess.run(["agy", "--dangerously-skip-permissions"])
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print(f"Gagal menjalankan agy: {e}")
+
+    # Inspect keyring for new account
+    new_data = get_active_keyring_data()
+    if not new_data or "id_token_email" not in new_data:
+        print("\n[WARNING] Tidak ada login baru yang terdeteksi di keyring.")
+        if current_data:
+            set_active_keyring_data(current_data)
+            print("[INFO] Mengembalikan akun sebelumnya ke posisi aktif.")
+        return
+
+    new_email = new_data["id_token_email"]
+    save_account_record(new_email, label=label, credential_data=new_data)
+
+    if HAS_RICH:
+        console.print(Panel(f"[bold green]✔ Berhasil menambahkan dan menyimpan akun: {new_email} ({label})[/bold green]\n[dim]Sekarang kamu bisa switch akun ini kapan saja via 'agys use' atau menu interaktif![/dim]", border_style="green"))
+    else:
+        print(f"[SUCCESS] Berhasil menambahkan dan menyimpan akun: {new_email} ({label})")
+
+
+def format_relative_time(iso_str: str) -> str:
+    """Format an ISO timestamp into a human-friendly relative string."""
+    try:
+        clean = iso_str.replace("Z", "+00:00")
+        if "." in clean:
+            base, rest = clean.split(".", 1)
+            offset = "+00:00"
+            for s in ["+", "-"]:
+                if s in rest:
+                    idx = rest.find(s)
+                    offset = rest[idx:]
+                    rest = rest[:idx]
+                    break
+            clean = f"{base}.{rest[:6]}{offset}"
+        dt = datetime.fromisoformat(clean)
+        diff = (datetime.now(timezone.utc) - dt).total_seconds()
+        if diff < 60:
+            return "baru saja"
+        elif diff < 3600:
+            return f"{int(diff // 60)}m lalu"
+        elif diff < 86400:
+            return f"{int(diff // 3600)}j lalu"
+        else:
+            return f"{int(diff // 86400)}h lalu"
+    except Exception:
+        return iso_str[:16]
+
+
+def get_running_agy_sessions() -> dict[str, tuple[str, str]]:
+    """Return map of conversation_id -> (pid, tty) for currently running agy processes."""
+    running = {}
+    try:
+        ps_out = subprocess.check_output(["ps", "-eo", "pid,tty,args"]).decode()
+        for line in ps_out.splitlines():
+            if "agy" in line and not "python" in line and not "grep" in line:
+                parts = line.strip().split(None, 2)
+                if len(parts) >= 2:
+                    pid, tty = parts[0], parts[1]
+                    try:
+                        for fd in os.listdir(f"/proc/{pid}/fd"):
+                            target = os.readlink(f"/proc/{pid}/fd/{fd}")
+                            if "/conversations/" in target and target.endswith(".db"):
+                                cid = os.path.basename(target).replace(".db", "")
+                                running[cid] = (pid, tty)
+                                break
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return running
+
+
+def get_recent_conversations(limit: int = 15) -> list[dict]:
+    """Load recent conversations from conversation_summaries.db, prioritizing current workspace."""
+    db_path = Path.home() / ".gemini" / "antigravity-cli" / "conversation_summaries.db"
+    if not db_path.exists():
+        return []
+
+    con = sqlite3.connect(str(db_path), timeout=5.0)
+    cwd = os.getcwd()
+    rows = con.execute("""
+        SELECT conversation_id, title, preview, step_count, last_modified_time, workspace_uris
+        FROM conversation_summaries
+        ORDER BY last_modified_time DESC
+        LIMIT 40
+    """).fetchall()
+    con.close()
+
+    running_map = get_running_agy_sessions()
+    current_ws = []
+    others = []
+
+    for r in rows:
+        cid, title, prev, steps, mtime, ws_json = r
+        try:
+            ws_list = json.loads(ws_json)
+        except Exception:
+            ws_list = []
+
+        is_cur = any(
+            cwd == w.replace("file://", "")
+            or cwd.startswith(w.replace("file://", "") + "/")
+            or w.replace("file://", "").startswith(cwd + "/")
+            for w in ws_list
+        )
+
+        active_info = running_map.get(cid)
+        item = {
+            "conversation_id": cid,
+            "title": title or "(Tanpa Judul)",
+            "preview": prev or "",
+            "step_count": steps,
+            "last_modified": mtime,
+            "relative_time": format_relative_time(mtime),
+            "is_current_ws": is_cur,
+            "active_on": active_info[1] if active_info else None,
+            "pid": active_info[0] if active_info else None,
+        }
+        if is_cur:
+            current_ws.append(item)
+        else:
+            others.append(item)
+
+    return (current_ws + others)[:limit]
+
+
+def resume_conversation_workflow(target_cid: str | None = None):
+    """Interactive conversation selector to resume in agy with the active account."""
+    if target_cid:
+        print(f"\nMelanjutkan percakapan ID: {target_cid}...")
+        os.execvp("agy", ["agy", "--dangerously-skip-permissions", "--conversation", target_cid])
+        return
+
+    convs = get_recent_conversations()
+    if not convs:
+        print("\n[INFO] Belum ada riwayat percakapan. Meluncurkan sesi Antigravity baru...")
+        os.execvp("agy", ["agy", "--dangerously-skip-permissions"])
+        return
+
+    # Find the recommended default index:
+    # First conversation not currently active on another TTY
+    default_idx = 1
+    for i, c in enumerate(convs, 1):
+        if not c["active_on"]:
+            default_idx = i
+            break
+
+    if HAS_RICH:
+        table = Table(
+            title=f"Daftar Percakapan Antigravity ({os.getcwd()})",
+            box=box.ROUNDED,
+            header_style="bold cyan",
+            show_lines=True
+        )
+        table.add_column("#", justify="center", style="bold yellow", width=4)
+        table.add_column("Status", justify="center", width=16)
+        table.add_column("Judul Percakapan (Task)", style="bold white", width=38)
+        table.add_column("Terakhir Aktif", justify="center", style="dim", width=14)
+        table.add_column("Steps", justify="right", style="cyan", width=8)
+        table.add_column("Workspace", style="dim", width=16)
+
+        for idx, c in enumerate(convs, 1):
+            if c["active_on"]:
+                status_str = f"[bold yellow]● {c['active_on']}[/bold yellow]"
+            else:
+                status_str = "[bold green]○ SIAP[/bold green]"
+
+            ws_label = "Current Repo" if c["is_current_ws"] else "Other"
+            title_display = c["title"]
+            if idx == default_idx:
+                title_display = f"{title_display} [green](terbaru)[/green]"
+
+            table.add_row(
+                str(idx),
+                status_str,
+                title_display,
+                c["relative_time"],
+                str(c["step_count"]),
+                ws_label
+            )
+        console.print(table)
+    else:
+        print("\n=== Daftar Percakapan Antigravity ===")
+        print(f"{'#':<4} {'Status':<16} {'Judul Percakapan':<36} {'Terakhir':<14} {'Steps':<8}")
+        print("-" * 80)
+        for idx, c in enumerate(convs, 1):
+            st = f"● {c['active_on']}" if c['active_on'] else "○ SIAP"
+            marker = " (terbaru)" if idx == default_idx else ""
+            print(f"{idx:<4} {st:<16} {c['title'][:34] + marker:<36} {c['relative_time']:<14} {c['step_count']:<8}")
+
+    prompt_str = f"\nPilih nomor percakapan untuk di-resume [{default_idx}] (atau [q] untuk batal): "
+    choice = input(prompt_str).strip()
+    if choice.lower() in ["q", "cancel", "batal"]:
+        return
+
+    if not choice:
+        selected_idx = default_idx
+    else:
+        try:
+            selected_idx = int(choice)
+        except ValueError:
+            print("[ERROR] Pilihan nomor tidak valid.")
+            return
+
+    if 1 <= selected_idx <= len(convs):
+        chosen = convs[selected_idx - 1]
+        cid = chosen["conversation_id"]
+        if chosen["active_on"]:
+            confirm = input(f"[WARNING] Percakapan ini terdeteksi sedang aktif di {chosen['active_on']}. Lanjutkan? (y/N): ").strip().lower()
+            if confirm != "y":
+                return
+        print(f"\nMeluncurkan 'agy --conversation {cid}' untuk: '{chosen['title']}'...")
+        os.execvp("agy", ["agy", "--dangerously-skip-permissions", "--conversation", cid])
+    else:
+        print("[ERROR] Nomor percakapan di luar rentang.")
+
+
+def auto_switch_best_account(do_resume: bool = False) -> bool:
+    """Find and switch to the account with the highest 5-hour and weekly quota."""
+    accounts = load_accounts()
+    if not accounts:
+        print("[ERROR] Belum ada akun yang terdaftar di switcher.")
+        return False
+
+    quotas = get_9router_quotas(force_refresh=True)
+    ordered = get_ordered_emails(accounts, quotas, mode="quota")
+    if not ordered:
+        print("[ERROR] Gagal mengurutkan akun berdasarkan kuota.")
+        return False
+
+    best_email = ordered[0]
+    active_email = get_active_email()
+    q = quotas.get(best_email, {})
+    plan = q.get("plan") or accounts[best_email].get("plan", "Free")
+    c_5h = q.get("claude_5h")
+    c_wk = q.get("claude_wk")
+
+    c5_str = f"{c_5h}%" if c_5h is not None else "--"
+    cw_str = f"{c_wk}%" if c_wk is not None else "--"
+
+    is_exhausted = (c_5h == 0 and c_wk == 0) or (c_wk == 0 and c_5h is None)
+    rst_str = format_reset_time(q.get("claude_reset"))
+    warn_text = f"\n[yellow]Perhatian: Semua akun sedang 0%. Akun ini dipilih karena reset tercepat ({rst_str or 'segera'}).[/yellow]" if is_exhausted else ""
+
+    if best_email == active_email:
+        if not is_exhausted:
+            msg = f"Akun aktif saat ini ([bold white]{best_email}[/bold white]) sudah memiliki kuota terbanyak!\nPlan: [bold cyan]{plan}[/bold cyan] | Claude 5h: [bold yellow]{c5_str}[/bold yellow] | Claude Wk: [bold green]{cw_str}[/bold green]"
+            if HAS_RICH:
+                console.print(Panel(f"[bold green]✔ {msg}[/bold green]", border_style="green"))
+            else:
+                print(f"[INFO] {msg}")
+            if do_resume:
+                resume_conversation_workflow()
+            return True
+
+    # Switch to best_email
+    if switch_account(best_email):
+        msg = f"Auto-selected akun dengan kuota terbanyak:\n[bold white]{best_email}[/bold white] (Plan: [bold cyan]{plan}[/bold cyan] | Claude 5h: [bold yellow]{c5_str}[/bold yellow] | Claude Wk: [bold green]{cw_str}[/bold green]){warn_text}"
+        if HAS_RICH:
+            console.print(Panel(f"[bold green]✔ {msg}[/bold green]", border_style="bright_blue"))
+        else:
+            print(f"[SUCCESS] {msg}")
+        if do_resume:
+            resume_conversation_workflow()
+        return True
+    return False
+
+
+def interactive_menu():
+    """Full interactive TUI for choosing accounts, sorting, and actions."""
+    cfg = load_config()
+    while True:
+        os.system("clear" if os.name == "posix" else "cls")
+        active_sort = cfg.get("sort_by", "quota")
+
+        if HAS_RICH:
+            console.print(Panel.fit(
+                "[bold cyan]Antigravity CLI Account Switcher[/bold cyan] [dim](agy-switch / agys)[/dim]\n"
+                "[dim]Switch effortlessly between Google One accounts with live 9Router quotas & subscription plans[/dim]",
+                border_style="bright_blue"
+            ))
+        else:
+            print("===========================================")
+            print(" Antigravity CLI Account Switcher (agys)")
+            print("===========================================")
+
+        ordered_emails = list_accounts_table(sort_by=active_sort)
+
+        print("\nSorting & Actions:")
+        print("  [1..N] Switch to account number")
+        print("  [b]    Auto-switch ke akun kuota terbanyak (Auto-Best)")
+        print("  [c]    Switch akun & langsung resume percakapan (Smart Resume)")
+        print("  [v]    Daftar riwayat percakapan & Resume (Conversation Picker)")
+        print("  [k]    Sort: Sisa Kuota Terbanyak (Highest Quota first)")
+        print("  [p]    Sort: Paket Subscription (Pro > Plus > Free)")
+        print("  [e]    Sort: Email (A-Z)")
+        print("  [r]    Refresh kuota & paket real-time dari 9Router")
+        print("  [u]    Lihat rincian kuota lengkap (Quota Tracker)")
+        print("  [l]    Update / ubah label akun (Rename)")
+        print("  [a]    Add/login new Google account")
+        print("  [s]    Sync active token from keyring")
+        print("  [d]    Delete a saved account")
+        print("  [t]    Test current account with 'agy models'")
+        print("  [g]    Launch Graphical GUI dialog (Zenity)")
+        print("  [q]    Quit\n")
+
+        choice = input("Pilih opsi: ").strip()
+        if not choice:
+            continue
+
+        if choice.lower() in ["q", "exit"]:
+            break
+        elif choice.lower() in ["b", "auto", "best"]:
+            auto_switch_best_account(do_resume=False)
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "v":
+            resume_conversation_workflow()
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "c":
+            ident = input("Pilih nomor/email akun tujuan untuk switch: ").strip()
+            if ident:
+                if switch_account(ident, ordered_emails=ordered_emails):
+                    resume_conversation_workflow()
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "k":
+            cfg["sort_by"] = "quota"
+            save_config(cfg)
+            continue
+        elif choice.lower() == "p":
+            cfg["sort_by"] = "plan"
+            save_config(cfg)
+            continue
+        elif choice.lower() == "e":
+            cfg["sort_by"] = "email"
+            save_config(cfg)
+            continue
+        elif choice.lower() in ["u", "quota", "usage"]:
+            show_quota_tracker(force_refresh=False, sort_by=active_sort)
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "r":
+            ordered_emails = list_accounts_table(force_refresh=True, sort_by=active_sort)
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "a":
+            add_account_workflow()
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() in ["l", "label", "rename"]:
+            update_label_workflow()
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "s":
+            auto_sync_active()
+            print("Token akun aktif berhasil disinkronkan.")
+            input("Tekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "g":
+            launch_gui()
+            input("Tekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "d":
+            ident = input("Masukkan nomor atau email akun yang ingin dihapus dari switcher: ").strip()
+            res = resolve_account(ident, ordered_emails=ordered_emails)
+            if res:
+                email, _ = res
+                confirm = input(f"Yakin ingin menghapus {email} dari daftar switcher? (y/N): ").strip().lower()
+                if confirm == "y":
+                    (ACCOUNTS_DIR / f"{email}.json").unlink(missing_ok=True)
+                    print(f"{email} berhasil dihapus dari daftar switcher.")
+            else:
+                print("Akun tidak ditemukan.")
+            input("Tekan [ENTER] untuk kembali ke menu...")
+        elif choice.lower() == "t":
+            print("\nMenjalankan 'agy --dangerously-skip-permissions models' untuk menguji akun aktif...")
+            subprocess.run(["agy", "--dangerously-skip-permissions", "models"])
+            input("\nTekan [ENTER] untuk kembali ke menu...")
+        else:
+            if switch_account(choice, ordered_emails=ordered_emails):
+                input("\nTekan [ENTER] untuk kembali ke menu...")
+
+
+def launch_gui():
+    """Launch native GTK Zenity graphical dialog for desktop users."""
+    auto_sync_active()
+    accounts = load_accounts()
+    active_email = get_active_email()
+
+    if not accounts and active_email:
+        save_account_record(active_email, label="Primary Account")
+        accounts = load_accounts()
+
+    if not shutil.which("zenity"):
+        print("[ERROR] 'zenity' is not installed for GUI mode.", file=sys.stderr)
+        return
+
+    items = []
+    cfg = load_config()
+    quotas = get_9router_quotas(force_refresh=False)
+    ordered_emails = get_ordered_emails(accounts, quotas, mode=cfg.get("sort_by", "quota"))
+
+    for email in ordered_emails:
+        acc = accounts[email]
+        is_active = "TRUE" if email == active_email else "FALSE"
+        status = "ACTIVE" if email == active_email else "SAVED"
+        q = quotas.get(email, {}) or {}
+        plan = q.get("plan") or acc.get("plan") or "Free"
+        label = acc.get("label", plan)
+        items.extend([is_active, email, f"{plan} ({label})", status])
+
+    cmd = [
+        "zenity", "--list", "--radiolist",
+        "--title=Antigravity Account Switcher",
+        "--text=Select Google One Account for Antigravity CLI:",
+        "--column=Select", "--column=Email", "--column=Plan & Label", "--column=Status",
+        "--width=650", "--height=360"
+    ] + items
+
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+    if res.returncode == 0:
+        selected_email = res.stdout.strip()
+        if selected_email and selected_email in accounts:
+            if switch_account(selected_email, ordered_emails=ordered_emails):
+                if shutil.which("notify-send"):
+                    subprocess.run(["notify-send", "Antigravity CLI", f"Switched active account to:\n{selected_email}"])
+
+
+def main():
+    ensure_dirs()
+    # First-time auto detection: If keyring has an active account, save it if none exist
+    active_email = get_active_email()
+    if active_email:
+        account_file = ACCOUNTS_DIR / f"{active_email}.json"
+        if not account_file.exists():
+            save_account_record(active_email, label="Primary Account")
+
+    args = sys.argv[1:]
+    if not args:
+        interactive_menu()
+        return
+
+    cmd = args[0].lower()
+
+    # Parse sorting flags
+    sort_arg = None
+    for i, a in enumerate(args):
+        if a in ["--sort", "-s"] and i + 1 < len(args):
+            sort_arg = args[i + 1].lower()
+        elif a.startswith("--sort="):
+            sort_arg = a.split("=", 1)[1].lower()
+
+    if sort_arg:
+        if sort_arg in ["quota", "kuota", "q"]:
+            sort_arg = "quota"
+        elif sort_arg in ["plan", "paket", "p"]:
+            sort_arg = "plan"
+        elif sort_arg in ["email", "e", "default"]:
+            sort_arg = "email"
+
+    if cmd in ["sort", "set-sort"]:
+        if len(args) > 1:
+            new_mode = args[1].lower()
+            if new_mode in ["quota", "kuota", "q"]:
+                new_mode = "quota"
+            elif new_mode in ["plan", "paket", "p"]:
+                new_mode = "plan"
+            elif new_mode in ["email", "e", "default"]:
+                new_mode = "email"
+            else:
+                print(f"Unknown sort mode '{new_mode}'. Pilihan: quota | plan | email")
+                sys.exit(1)
+            cfg = load_config()
+            cfg["sort_by"] = new_mode
+            save_config(cfg)
+            print(f"[SUCCESS] Default sorting switcher diubah ke: {new_mode}")
+        else:
+            cfg = load_config()
+            print(f"Current default sort: {cfg.get('sort_by', 'quota')}. Pilihan: quota | plan | email")
+        return
+
+    if cmd in ["list", "ls"]:
+        force_ref = ("--refresh" in args or "-r" in args)
+        list_accounts_table(force_refresh=force_ref, sort_by=sort_arg)
+    elif cmd in ["quota", "usage", "quotas"]:
+        force_ref = ("--refresh" in args or "-r" in args)
+        show_quota_tracker(force_refresh=force_ref, sort_by=sort_arg)
+    elif cmd in ["auto", "best"]:
+        do_resume = any(a in ["-c", "--resume"] for a in args)
+        auto_switch_best_account(do_resume=do_resume)
+    elif cmd in ["use", "switch"]:
+        if len(args) < 2:
+            print("Usage: agys use <email|index|auto> [-c|--resume]")
+            sys.exit(1)
+        do_resume = any(a in ["-c", "--resume"] for a in args)
+        target = [a for a in args[1:] if a not in ["-c", "--resume"]][0]
+        if target.lower() in ["auto", "best"]:
+            auto_switch_best_account(do_resume=do_resume)
+        else:
+            if switch_account(target):
+                if do_resume:
+                    resume_conversation_workflow()
+    elif cmd in ["resume", "c", "continue"]:
+        target_id = args[1] if len(args) > 1 and not args[1].startswith("-") else None
+        resume_conversation_workflow(target_cid=target_id)
+    elif cmd in ["save"]:
+        email = get_active_email()
+        if not email:
+            print("[ERROR] Tidak ada akun yang sedang aktif di keyring Antigravity.")
+            sys.exit(1)
+        label = " ".join(args[1:]) if len(args) > 1 else None
+        if save_account_record(email, label=label):
+            saved_label = label or "Google One Pro"
+            print(f"[SUCCESS] Berhasil menyimpan akun aktif saat ini: {email} ({saved_label})")
+        else:
+            print("[ERROR] Gagal menyimpan akun aktif.")
+    elif cmd in ["current", "whoami", "status"]:
+        email = get_active_email()
+        if email:
+            data = get_active_keyring_data()
+            token = data.get("token", {}) if data else {}
+            exp_str, is_exp = parse_expiry(token)
+            if HAS_RICH:
+                console.print(Panel(
+                    f"[bold green]Current Active Account:[/bold green] [bold white]{email}[/bold white]\n"
+                    f"[dim]Expiry: {exp_str} ({'Expired, will auto-refresh' if is_exp else 'Valid'})[/dim]",
+                    border_style="green"
+                ))
+            else:
+                print(f"Current Active Account: {email} (Expiry: {exp_str})")
+        else:
+            print("No active account logged into Antigravity CLI keyring.")
+    elif cmd in ["add", "login"]:
+        add_account_workflow()
+    elif cmd in ["sync"]:
+        auto_sync_active()
+        print("Active account synced from keyring.")
+    elif cmd in ["label", "set-label", "update-label", "rename"]:
+        ident = args[1] if len(args) > 1 else None
+        new_lbl = " ".join(args[2:]) if len(args) > 2 else None
+        update_label_workflow(ident, new_lbl)
+    elif cmd in ["remove", "rm", "delete"]:
+        if len(args) < 2:
+            print("Usage: agys remove <email|index>")
+            sys.exit(1)
+        res = resolve_account(args[1])
+        if res:
+            email, _ = res
+            (ACCOUNTS_DIR / f"{email}.json").unlink(missing_ok=True)
+            print(f"Removed {email} from switcher storage.")
+        else:
+            print("Account not found.")
+    elif cmd in ["test"]:
+        print("Testing current active account with 'agy --dangerously-skip-permissions models'...")
+        subprocess.run(["agy", "--dangerously-skip-permissions", "models"])
+    elif cmd in ["gui", "--gui"]:
+        launch_gui()
+    elif cmd in ["help", "--help", "-h"]:
+        print("""Antigravity CLI Account Switcher (agy-switch / agys)
+
+Usage:
+  agys                               Open interactive TUI menu
+  agys auto [-c]                     Auto-switch to account with highest 5h & weekly quota (add -c to resume)
+  agys list [--sort <mode>] [-r]     List all accounts (modes: quota | plan | email)
+  agys quota [--sort <mode>] [-r]    Detailed Quota Tracker with progress bars
+  agys sort <quota|plan|email>       Set default sorting preference
+  agys use <email|index|auto> [-c]   Switch account immediately (add -c to resume conversation)
+  agys resume [conversation_id]      Interactive conversation picker to resume session in agy (alias: agys c)
+  agys save [label]                  Save currently active account in keyring
+  agys label [email|index] [label]   Update account label (alias: rename)
+  agys current                       Show currently active account in agy
+  agys add                           Add/login new Google account via OAuth
+  agys sync                          Sync active token from keyring
+  agys remove <acc>                  Remove account from switcher
+  agys test                          Test active account credentials
+  agys gui                           Launch graphical desktop dialog (Zenity)
+""")
+    else:
+        # Check if the argument is an email or index directly, possibly with -c / --resume
+        do_resume = any(a in ["-c", "--resume"] for a in args)
+        clean_args = [a for a in args if a not in ["-c", "--resume"]]
+        target = clean_args[0] if clean_args else cmd
+        if switch_account(target):
+            if do_resume:
+                resume_conversation_workflow()
+        else:
+            print(f"Unknown command or account: '{cmd}'. Run 'agys --help' for usage.")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "antigravity-switcher"
+version = "1.0.0"
+description = "Fast, seamless multi-account switcher and real-time quota tracker for Google Antigravity CLI (agy)"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Agam Bondan", email = "agamgans89@gmail.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Environment :: Console",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "rich>=13.0.0",
+    "keyring>=24.0.0",
+]
+requires-python = ">=3.9"
+
+[project.scripts]
+agys = "bin.agys:main"
+agy-switch = "bin.agys:main"
