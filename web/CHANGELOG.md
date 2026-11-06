@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-11-06
+
+### Added
+- **Direct UUID Input for `agyr`:** You can now paste a full or partial conversation UUID directly into the `agyr` resume prompt instead of only entering numeric indices.
+- **UUID Command-Line Parameter:** Launch and resume specific conversations directly via `agyr <uuid>` or `agys auto -c <uuid>`.
+- **UUID Column in Session Table:** Added a dedicated `UUID` column to the conversation table for easy reference.
+- **Google Search Console Verification:** Added meta tag verification to the production landing page on Vercel.
+
+---
+
 ## [1.0.0] - 2026-11-06
 
 ### Added
