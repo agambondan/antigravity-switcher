@@ -1104,6 +1104,7 @@ def resume_conversation_workflow(target_cid: str | None = None):
             break
 
     if HAS_RICH:
+        is_wide = (console.width >= 115)
         table = Table(
             title=f"Daftar Percakapan Antigravity ({os.getcwd()})",
             box=box.ROUNDED,
@@ -1111,12 +1112,13 @@ def resume_conversation_workflow(target_cid: str | None = None):
             show_lines=True
         )
         table.add_column("#", justify="center", style="bold yellow", width=4)
-        table.add_column("Status", justify="center", width=14)
-        table.add_column("UUID", justify="center", style="dim cyan", width=11)
-        table.add_column("Judul Percakapan (Task)", style="bold white", width=36)
+        table.add_column("Status", justify="center", width=12)
+        table.add_column("UUID", justify="center", style="dim cyan", no_wrap=True)
+        table.add_column("Judul Percakapan (Task)", style="bold white", min_width=20)
         table.add_column("Terakhir Aktif", justify="center", style="dim", width=14)
-        table.add_column("Steps", justify="right", style="cyan", width=8)
-        table.add_column("Workspace", style="dim", width=14)
+        if is_wide:
+            table.add_column("Steps", justify="right", style="cyan", width=8)
+            table.add_column("Workspace", style="dim", width=13)
 
         for idx, c in enumerate(convs, 1):
             if c["active_on"]:
@@ -1129,26 +1131,26 @@ def resume_conversation_workflow(target_cid: str | None = None):
             if idx == default_idx:
                 title_display = f"{title_display} [green](terbaru)[/green]"
 
-            cid_short = f"{c['conversation_id'][:8]}…"
-            table.add_row(
+            row_cells = [
                 str(idx),
                 status_str,
-                cid_short,
+                c["conversation_id"],
                 title_display,
                 c["relative_time"],
-                str(c["step_count"]),
-                ws_label
-            )
+            ]
+            if is_wide:
+                row_cells.extend([str(c["step_count"]), ws_label])
+
+            table.add_row(*row_cells)
         console.print(table)
     else:
         print("\n=== Daftar Percakapan Antigravity ===")
-        print(f"{'#':<4} {'Status':<14} {'UUID':<10} {'Judul Percakapan':<34} {'Terakhir':<14} {'Steps':<8}")
-        print("-" * 88)
+        print(f"{'#':<4} {'Status':<12} {'UUID':<38} {'Judul Percakapan':<32} {'Terakhir':<14} {'Steps':<8}")
+        print("-" * 116)
         for idx, c in enumerate(convs, 1):
             st = f"● {c['active_on']}" if c['active_on'] else "○ SIAP"
             marker = " (terbaru)" if idx == default_idx else ""
-            cid_s = f"{c['conversation_id'][:8]}…"
-            print(f"{idx:<4} {st:<14} {cid_s:<10} {c['title'][:32] + marker:<34} {c['relative_time']:<14} {c['step_count']:<8}")
+            print(f"{idx:<4} {st:<12} {c['conversation_id']:<38} {c['title'][:30] + marker:<32} {c['relative_time']:<14} {c['step_count']:<8}")
 
     prompt_str = f"\nPilih nomor [#] atau paste UUID untuk di-resume [{default_idx}] (atau [q] untuk batal): "
     choice = input(prompt_str).strip()

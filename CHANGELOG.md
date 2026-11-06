@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.2] - 2026-11-06
+
+### Changed
+- **Full 36-Character UUID Display:** Updated `agyr` / `agys c` conversation table to display full, unshortened UUIDs (`no_wrap=True`) instead of truncating to 8 characters, allowing easy visual verification and copy-pasting.
+- **Adaptive Responsive Layout:** Implemented responsive column management for narrow and split-pane terminal windows (< 115 columns), ensuring full UUID and task title are always clearly visible.
+
+---
+
 ## [1.0.1] - 2026-11-06
 
 ### Added
