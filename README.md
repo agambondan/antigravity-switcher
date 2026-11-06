@@ -6,7 +6,14 @@
 
 > **Fast, seamless multi-account switcher and real-time quota tracker for Google Antigravity CLI (`agy`).**
 
-https://github.com/user-attachments/assets/9fcd95c3-383a-406c-840f-7ce93b29c228
+<p align="center">
+  <img src="assets/demo.gif" alt="Antigravity Switcher Live Demo" width="100%" />
+</p>
+<p align="center">
+  <a href="https://github.com/agambondan/antigravity-switcher/releases/download/v1.0.0/demo.mp4">
+    <img src="https://img.shields.io/badge/▶_Watch_Demo_Video-MP4_(Full_HD)-blue?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Watch Demo Video" />
+  </a>
+</p>
 
 ---
 
