@@ -6,12 +6,7 @@
 
 > **Fast, seamless multi-account switcher and real-time quota tracker for Google Antigravity CLI (`agy`).**
 
-<p align="center">
-  <img src="assets/demo.gif" alt="Antigravity Switcher Demo" width="100%" />
-</p>
-<p align="center">
-  <a href="assets/demo.mp4"><b>▶ Click here to view / download the full MP4 Demo Video</b></a>
-</p>
+https://github.com/user-attachments/assets/9fcd95c3-383a-406c-840f-7ce93b29c228
 
 ---
 
@@ -44,6 +39,13 @@ When working intensively with **Google Antigravity CLI (`agy`)**, developers fre
 ---
 
 ## 📸 Screenshots & Previews
+
+### 🎬 Interactive Workflow Demo
+Auto-looping walkthrough of `agys list`, `agys usage`, `agys auto`, and collision-free `agyr` resume.
+
+<p align="center">
+  <img src="assets/demo.gif" alt="Antigravity Switcher Animated Walkthrough" width="100%" />
+</p>
 
 ### 1. Detailed Live Quota Tracker (`agys usage` / `agys quota`)
 Track 5-hour cooldown timers, weekly quotas for Claude 3.5 Sonnet & GPT, Gemini Pro, and Gemini 4 Argon progress bars.
