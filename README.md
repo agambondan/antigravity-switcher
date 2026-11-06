@@ -6,6 +6,13 @@
 
 > **Fast, seamless multi-account switcher and real-time quota tracker for Google Antigravity CLI (`agy`).**
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Antigravity Switcher Demo" width="100%" />
+</p>
+<p align="center">
+  <a href="assets/demo.mp4"><b>▶ Click here to view / download the full MP4 Demo Video</b></a>
+</p>
+
 ---
 
 ## ⚡ The Problem
@@ -33,6 +40,25 @@ When working intensively with **Google Antigravity CLI (`agy`)**, developers fre
 - **🛡️ Multi-Terminal Collision Prevention:** Detects active PTY sessions (`● pts/2`, `● pts/0`) across running terminals to ensure you never accidentally overwrite or resume another terminal's active conversation.
 - **🔓 Auto Bypass Permissions:** Configured to automatically pass `--dangerously-skip-permissions` across all commands and shell aliases.
 - **🖥️ Beautiful Interactive TUI & Desktop GUI:** Terminal menu with Rich formatting, progress bars, and Zenity GTK desktop dialog support.
+
+---
+
+## 📸 Screenshots & Previews
+
+### 1. Detailed Live Quota Tracker (`agys usage` / `agys quota`)
+Track 5-hour cooldown timers, weekly quotas for Claude 3.5 Sonnet & GPT, Gemini Pro, and Gemini 4 Argon progress bars.
+
+![Live Quota Tracker](assets/screenshot-quota.png)
+
+### 2. Multi-Account Management & Sorting (`agys list`)
+Compare all configured Google accounts sorted by remaining quota or plan tier (`Pro`, `Plus`, `Free`).
+
+![Account List & Sorting](assets/screenshot-list.png)
+
+### 3. Smart Multi-Terminal Conversation Resume (`agyr` / `agys resume`)
+Automatically switches to the account with the most quota and resumes your active task while avoiding terminal collisions.
+
+![Smart Conversation Resume](assets/screenshot-resume.png)
 
 ---
 

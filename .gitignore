@@ -22,3 +22,7 @@ dist/
 .idea/
 *.swp
 *.swo
+
+# Temporary asset frames
+assets/frames/
+
